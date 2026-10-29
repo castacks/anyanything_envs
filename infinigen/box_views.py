@@ -195,10 +195,13 @@ class VoxAcc:
         return vox_centres(self.keys), self.lab
 
 
-def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=None, min_top_agl=0.3, only_prefix=None):
+def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=None, min_top_agl=0.3, only_prefix=None,
+                 small_m=0.25, family=None):
     """Every render-visible mesh instance whose bounds meet the region: points in world coordinates + labels.
     With ground(x, y) given, instances lying wholly below min_top_agl over the ground (grass, leaves, twigs) are
-    skipped: they are under the flight band and would dominate the cloud."""
+    skipped: they are under the flight band and would dominate the cloud. Instances smaller than small_m count as
+    one point each. family(name) gives a source object's label (default: its name up to the first '(' or '.')."""
+    fam_of = family or (lambda nm: nm.split("(")[0].split(".")[0])
     deps = bpy.context.evaluated_depsgraph_get()
     cache = {}
     acc, names = VoxAcc(), {}
@@ -254,7 +257,7 @@ def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=Non
         bb, ext = bi
         M = np.array(inst.matrix_world)
         bw = bb @ M[:3, :3].T + M[:3, 3]
-        if ext * np.linalg.norm(M[:3, :3], axis=0).max() < 0.25:
+        if ext * np.linalg.norm(M[:3, :3], axis=0).max() < small_m:
             # leaves, twigs, needles, pebbles: one voxel's worth each; keep the canopy, drop the ground litter
             if ground is not None:
                 c = bw.mean(0)
@@ -264,7 +267,7 @@ def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=Non
             if np.abs(bw[:, 0]).max() <= region and np.abs(bw[:, 1]).max() <= region and bw[:, 2].min() <= zcap:
                 small_pts.append(bw.mean(0))
                 n_small += 1
-                small_lab.append(names.setdefault(nm.split("(")[0].split(".")[0], len(names)))
+                small_lab.append(names.setdefault(fam_of(nm), len(names)))
                 if len(small_pts) >= 200_000:
                     for li in set(small_lab):
                         m = np.array(small_lab) == li
@@ -290,8 +293,7 @@ def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=Non
         Pw = P @ M[:3, :3].T + M[:3, 3]
         keep = (np.abs(Pw[:, 0]) <= region) & (np.abs(Pw[:, 1]) <= region) & (Pw[:, 2] <= zcap)
         if keep.any():
-            fam = nm.split("(")[0].split(".")[0]
-            li = names.setdefault(fam, len(names))
+            li = names.setdefault(fam_of(nm), len(names))
             acc.add(Pw[keep], li)
             n_big += 1
     if small_pts:
