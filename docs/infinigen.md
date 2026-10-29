@@ -86,6 +86,20 @@ gs2 has; use 8 m or more.
 7. **Nothing beyond the square.** The populated square ends at `--half + --margin`. `box_views.py` adds a
    backdrop (a terrain skirt continuing the edge heights, instanced copies of the scene's own trees at the
    measured density, a dark tone below the horizon); it is outside the collision cloud.
+8. **Near-terrain subdivision (what ran mountain out of memory).** Infinigen subdivides its near-camera terrain
+   twice (`SUBSURF` levels 2) for the ground cover; with the box crop that is the whole populated square, already
+   meshed at `--voxel`. OpenSubdiv's setup costs ~53 KB per face of that mesh whatever the level (measured:
+   50k / 100k / 200k faces take 2.6 / 5.2 / 10.6 GB, level 1 as much as level 2); at that rate the step costs
+   ~13 GB on plain's square (245k faces) and ~29 GB on cliff's (553k). mountain seed 105 has a floating
+   "upside-down mountain" over 70 % of the box: 1.09 M faces in the square (3.4x the flat area), 64 % of them on
+   the floating mountain, and the step passed 45 GB and was OOM-killed. Above `--near-subsurf-max-faces` (600k,
+   above every type that finished) the near terrain stays as meshed; at 0.15 m it is already finer than
+   Infinigen's own subdivided one (its coarse mesh is 0.8 m). `box.json` records `near_terrain`. mountain 105
+   then generates in 24.5 min at a 10.8 GB peak (the chopped-tree booleans; the crop step itself 4.2 GB).
+9. **Camera rules a crop cannot meet.** Infinigen still poses its camera before anything is populated, and
+   snowy_mountain asks for every visible terrain point to be at least 40 m away: on a 58 m square no proposal
+   passes (0 of 3000 on mountain's), and Infinigen gives up after 30000 tries. The pose search is then retried
+   with Infinigen's defaults (2 m, 50-100 % terrain in view); the camera no longer decides anything here.
 
 ## Scene types
 
@@ -93,3 +107,10 @@ Tested: forest. Running in the first smoke batch: plain, river, canyon, cliff, m
 snowy_mountain, coast. Not yet: **cave** (the ground is found by casting down from above, which hits the
 roof; needs a floor search from inside) and **Infinigen-Indoors** (a different generator, `generate_indoors`).
 Underwater types (kelp_forest, coral_reef, under_water) are not useful for drones.
+
+**Overhangs (mountain).** mountain draws Infinigen's floating "upside-down mountains" in 40 % of seeds. Seed 105
+has one over 70 % of the box, its underside 13-20 m up (5-18 m over the ground). `box_views.py` finds the ground
+by casting down from above and leaves the terrain out of the cloud, so under it the ground grid is the island's
+top (median 24 m, one of the two smoke views stands on it) and the band map describes that top, as in a cave.
+Until `box_views.py` searches for the floor, keep them out of flight boxes with
+`-p scene.upsidedown_mountains_chance=0`.
