@@ -10,7 +10,10 @@ asset detail). Terrain is meshed with the view-independent UniformMesher over th
         --design-dist 8 --no-monocots --configs fast_terrain_assets.gin [--tree-density 0.06] [-p gin.param=value]
 
 Scene types are Infinigen's ``configs_nature/scene_types`` (forest, plain, river, canyon, cliff, mountain,
-desert, arctic, snowy_mountain, coast; cave needs its own ground rule, see docs/infinigen.md).
+desert, arctic, snowy_mountain, coast, cave). A cave box follows the cave (see cave_bounds and docs/infinigen.md):
+
+    python infinigen/nature_box.py --seed 7 --out out/cave_7 --scene-type cave --half 15 --margin 10 \
+        --design-dist 8 --no-monocots --tree-density 0 --configs fast_terrain_assets.gin
 
 Writes <out>/scene/scene.blend (+ Infinigen's assets/ and logs) and <out>/box.json.
 """
@@ -41,9 +44,46 @@ def parse():
     ap.add_argument("--voxel", type=float, default=0.15, help="terrain mesher voxel, m")
     ap.add_argument("--unique-trees", type=int, default=12, help="unique trees per species; the rest are copies")
     ap.add_argument("--unique-bushes", type=int, default=10, help="unique bushes per species; the rest are copies")
+    ap.add_argument("--cave-min-void", type=float, default=300.0,
+                    help="cave: stop after the terrain if the flight box holds less cave than this, m3")
     ap.add_argument("--configs", nargs="*", default=[])
     ap.add_argument("-p", "--overrides", nargs="*", default=[])
     return ap.parse_args()
+
+
+def cave_bounds(terrain, region, half, step=1.0, zrange=(-40.0, 40.0)):
+    """Where the cave is. Infinigen carves one cave per 100 m Voronoi cell (cave.gin: frequency 0.01, randomness 0):
+    the cell at the origin holds an L-system tunnel network, its surface centroid at (0, 0, Caves.height_offset = -4),
+    turned about z at random, scaled to a 100 m padded diagonal, walls roughened by 2-5 m of Perlin noise. Sample the
+    terrain SDF over the populated square; free cells with rock above them in their column are cave, and the largest
+    connected piece reaching into the flight box sets the terrain z bounds (2 m of rock below and above it). Also
+    returns where to populate: within 2 cells of that piece (its floor, walls and roof, not the ground above)."""
+    from scipy import ndimage
+    xs = np.arange(-region, region + 1e-6, step)
+    zs = np.arange(zrange[0], zrange[1] + 1e-6, step / 2)
+    Z, Y, X = np.meshgrid(zs, xs, xs, indexing="ij")
+    sdf = terrain.compute_camera_space_sdf(np.stack([X.ravel(), Y.ravel(), Z.ravel()], 1).astype(np.float32))
+    solid = sdf.reshape(Z.shape) < 0
+    roofed = ~solid & np.flip(np.logical_or.accumulate(np.flip(solid, 0), 0), 0)
+    lab, n = ndimage.label(roofed)
+    inbox = roofed & (np.abs(X) <= half) & (np.abs(Y) <= half)
+    counts = np.bincount(lab[inbox], minlength=n + 1)
+    if n == 0 or counts[1:].max() == 0:
+        return {"void_m3_box": 0.0}, None
+    k = int(counts[1:].argmax()) + 1
+    zc = Z[lab == k]
+    vol = step * step * step / 2
+    near = ndimage.binary_dilation(lab == k, iterations=2)
+
+    def in_cave(p):
+        idx = np.round(np.stack([(p[:, 2] - zs[0]) * 2, p[:, 1] + region, p[:, 0] + region], 1) / step).astype(int)
+        ok = ((idx >= 0) & (idx < near.shape)).all(1)
+        out = np.zeros(len(p), bool)
+        out[ok] = near[tuple(idx[ok].T)]
+        return out
+    return {"z_bounds": [float(np.floor(zc.min() - 2)), float(np.ceil(zc.max() + 2))],
+            "void_m3_box": float(counts[k] * vol), "void_m3_region": float((lab == k).sum() * vol),
+            "void_z_m": [float(zc.min()), float(zc.max())], "pieces": int(n)}, in_cave
 
 
 def main():
@@ -51,6 +91,9 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     region = a.half + a.margin            # real assets inside |x|,|y| <= region
     tbound = region + 4.0                 # fine terrain a little wider than the assets
+    cave = a.scene_type == "cave"
+    zlo, zhi = (-25, 0) if cave else (-15, 35)   # a cave's are replaced by cave_bounds once the terrain exists
+    cave_rec, in_cave = {}, []
 
     import logging
     from infinigen.core.placement import split_in_view
@@ -59,6 +102,8 @@ def main():
     def box_inview(points, cameras, dist_max, vis_margin, frame_start=None, frame_end=None, verbose=False):
         p = np.asarray(points, float)[:, :3]
         inside = (np.abs(p[:, 0]) <= region) & (np.abs(p[:, 1]) <= region)
+        if in_cave:
+            inside &= in_cave[0](p)   # a cave box populates the cave, not the ground above it
         out_box = np.maximum(np.abs(p[:, :2]) - a.half, 0.0)
         dist = a.design_dist + np.hypot(out_box[:, 0], out_box[:, 1])
         return inside, np.where(inside, dist, 1e7), np.where(inside, 0.0, 1e7)
@@ -164,13 +209,48 @@ def main():
         return all_objs, updated
 
     plc.populate_collection = populate_instanced
+
+    if cave:
+        # terrain z bounds around the cave, measured on the terrain itself before it is meshed
+        from infinigen.terrain.core import Terrain
+        _coarse_terrain = Terrain.coarse_terrain
+
+        def coarse_terrain_cave(self):
+            rec, fn = cave_bounds(self, region, a.half)
+            cave_rec.update(rec)
+            print("cave", json.dumps(cave_rec), flush=True)
+            if cave_rec["void_m3_box"] < a.cave_min_void:
+                raise SystemExit(f"cave: {cave_rec['void_m3_box']:.0f} m3 of cave in the flight box "
+                                 f"(< --cave-min-void {a.cave_min_void:g}); try another seed")
+            in_cave.append(fn)
+            self.populated_bounds = (-tbound, tbound, -tbound, tbound, *cave_rec["z_bounds"])
+            return _coarse_terrain(self)
+
+        Terrain.coarse_terrain = coarse_terrain_cave
+
+        # The UniformMesher leaves the terrain open where it meets the bounds: a tunnel crossing the side of the square
+        # would end in a hole onto the sky, letting daylight into the cave. Count everything beyond the sides and the
+        # bottom as rock, so tunnels end in a wall there (the top stays open: real entrances keep their sky).
+        from infinigen.terrain.mesher.uniform_mesher import UniformMesher
+        _kernel_caller = UniformMesher.kernel_caller
+
+        def kernel_caller_closed(self, kernels, XYZ):
+            sdf = _kernel_caller(self, kernels, XYZ)
+            if not self.enclosed:
+                m = self.closing_margin
+                out = ((XYZ[:, 0] < self.x_min + m) | (XYZ[:, 0] > self.x_max - m) | (XYZ[:, 1] < self.y_min + m)
+                       | (XYZ[:, 1] > self.y_max - m) | (XYZ[:, 2] < self.z_min + m))
+                sdf[out] = -1.0
+            return sdf
+
+        UniformMesher.kernel_caller = kernel_caller_closed
     logging.getLogger("infinigen").setLevel(logging.INFO)
     logging.getLogger("infinigen.core.nodes.node_wrangler").setLevel(logging.CRITICAL)
 
     n = int(round(2 * tbound / a.voxel / 3))  # UniformMesher upscales 3x
     overrides = [
         'fine_terrain.mesher_backend="UniformMesher"',
-        f"Terrain.populated_bounds=({-tbound}, {tbound}, {-tbound}, {tbound}, -15, 35)",
+        f"Terrain.populated_bounds=({-tbound}, {tbound}, {-tbound}, {tbound}, {zlo}, {zhi})",
         f"UniformMesher.subdivisions=({n}, -1, -1)",
         "compose_nature.leaf_particles_chance=0.0",
         "compose_nature.rain_particles_chance=0.0",
@@ -186,6 +266,9 @@ def main():
         overrides.append("scene.waterbody_chance=0.0")
     if a.no_monocots:
         overrides.append("compose_nature.monocots_chance=0.0")
+    if cave:
+        # fast_terrain_assets.gin turns caves off; only cave asset 0 reaches the box (the origin's cell always uses it)
+        overrides += ["scene.caves_chance=1", "caves.load_assets.on_the_fly_instances=1"]
     overrides += a.overrides
 
     scene_dir = a.out / "scene"
@@ -200,6 +283,9 @@ def main():
            "voxel": a.voxel, "mesher_subdiv": n, "configs": args.configs, "overrides": overrides,
            "unique_trees": a.unique_trees, "unique_bushes": a.unique_bushes,
            "seconds": round(time.time() - t0, 1)}
+    if cave:
+        rec["cave"] = cave_rec
+        rec["terrain_z"] = cave_rec["z_bounds"]
     (a.out / "box.json").write_text(json.dumps(rec, indent=1))
     print("FOREST_BOX_DONE", json.dumps(rec))
 

@@ -6,6 +6,10 @@ true depth, a top-down render. Optional thin wires (pole line with guy wires, ro
 
 Camera = the Starling front camera of our Blender screen (640 x 480, 87 deg horizontal FOV, level).
 Writes <out>/{cloud.npz, band.json, band_map.png?, views.json, v<k>_<look>.png, v<k>_depth.npy, top.png}.
+
+A cave box (box.json scene_type "cave") is flown inside the cave: the ground is the floor of the void Infinigen carved
+(CaveFloor), the cave rock (walls, roof) joins the cloud as label "cave_rock", columns without a floor are solid in
+every slice, there is no backdrop, and top.png is a cut-away (terrain more than CAVE_CUT above the floor removed).
 """
 from __future__ import annotations
 
@@ -76,6 +80,169 @@ def ground_fn(objs):
                 best = z if best is None else max(best, z)
         return best
     return zg
+
+
+# ---------------------------------------------------------------- caves
+
+MIN_VOID = 1.0     # void intervals lower than this (pockets in the noisy cave walls) are not a floor
+CAVE_CUT = 2.0     # cut-away top view: terrain more than this above the floor is removed
+
+
+class CaveFloor:
+    """The floor of a cave, where casting down from above meets the roof (or the ground above the cave) first. Every
+    terrain surface on the vertical line through (x, y) is collected top down and paired into void intervals: a roof
+    (face normal down; Infinigen's terrain normals point out of the rock) and the next surface below it with its normal
+    up, the floor; a floor with nothing above it is open to the sky. Only roofed intervals whose floor carries
+    Infinigen's "cave" tag (MaskTag: the faces it carved) count, not voids under other overhangs; open ones (a
+    sinkhole, an entrance, the ground above the cave, which is tagged too where the roof is thin) do not. The floor of
+    the tallest (heights capped at the band top, ties to the lowest) is the ground; None where the column is solid rock
+    or open. Scenes without the tag: every roofed interval counts."""
+
+    def __init__(self, objs, cave_ids=(), band_top=BAND[1]):
+        deps = bpy.context.evaluated_depsgraph_get()
+        self.parts = []
+        for o in objs:
+            me = o.evaluated_get(deps).data
+            tag = np.zeros(len(me.polygons), np.int32)
+            if "MaskTag" in me.attributes:
+                me.attributes["MaskTag"].data.foreach_get("value", tag)
+            self.parts.append((BVHTree.FromObject(o, deps), o.matrix_world.copy(), np.isin(tag, list(cave_ids))))
+        self.tagged = any(p[2].any() for p in self.parts)
+        self.band_top = band_top
+
+    def hits(self, x, y, ztop=200.0):
+        """(z, normal z, cave-tagged) of every terrain surface on the vertical line through (x, y), top down."""
+        out = []
+        for t, M, cave in self.parts:
+            Mi = M.inverted()
+            o = Mi @ Vector((x, y, ztop))
+            d = (Mi.to_3x3() @ Vector((0, 0, -1))).normalized()
+            N = Mi.transposed().to_3x3()
+            for _ in range(256):
+                loc, nrm, idx, _ = t.ray_cast(o, d)
+                if loc is None:
+                    break
+                out.append(((M @ loc).z, (N @ nrm).normalized().z, idx < len(cave) and bool(cave[idx])))
+                o = loc + 1e-4 * d
+        return sorted(out, reverse=True)
+
+    def voids(self, x, y):
+        """Void intervals (floor z, roof z, floor cave-tagged), top down; roof z is inf when open to the sky."""
+        iv, roof = [], math.inf
+        for z, nz, cave in self.hits(x, y):
+            if nz < 0:
+                roof = z
+            elif roof is not None:
+                iv.append((z, roof, cave))
+                roof = None
+        return iv
+
+    def interval(self, x, y):
+        """The chosen void interval (floor z, roof z), the number of cave intervals at least MIN_VOID tall, and
+        whether the column's topmost surface faces the sky."""
+        iv = self.voids(x, y)
+        ok = [(zf, zr) for zf, zr, cave in iv
+              if math.isfinite(zr) and zr - zf >= MIN_VOID and (cave or not self.tagged)]
+        best = max(ok, key=lambda v: (min(v[1] - v[0], self.band_top), -v[0]), default=None)
+        return best, len(ok), bool(iv) and not math.isfinite(iv[0][1])
+
+    def __call__(self, x, y):
+        best = self.interval(x, y)[0]
+        return None if best is None else best[0]
+
+
+def cave_tag_ids(scene):
+    """MaskTag values of Infinigen's cave-tagged faces (MaskTag.json next to scene.blend)."""
+    f = Path(scene).parent / "MaskTag.json"
+    tags = json.loads(f.read_text()) if f.exists() else {}
+    return [v for k, v in tags.items() if "cave" in k.split(".")]
+
+
+def cave_stats(zg, g, half):
+    """Over the floor-grid columns inside the box: share with a floor, floor heights, headroom (roof - floor), share
+    with more than one cave level, share whose topmost surface faces the sky (ground above the cave inside the meshed
+    z range, or an opening)."""
+    rec = [zg.interval(x, y) for y in g for x in g if abs(x) < half and abs(y) < half]
+    iv = [v for v, _, _ in rec if v is not None]
+    head = np.array([zr - zf for zf, zr in iv])
+    q = np.percentile(head, [10, 50, 90]).round(2).tolist() if len(head) else [None] * 3
+    return {"floor_frac": round(len(iv) / max(len(rec), 1), 4),
+            "floor_z_m": [round(min(v[0] for v in iv), 2), round(max(v[0] for v in iv), 2)] if iv else None,
+            "headroom_m": dict(zip(["p10", "median", "p90"], q)),
+            "multi_level_frac": round(float(np.mean([n > 1 for v, n, _ in rec if v is not None])), 4) if iv else 0.0,
+            "open_top_frac": round(float(np.mean([o for _, _, o in rec])), 4), "cave_tagged": zg.tagged,
+            "min_void_m": MIN_VOID}
+
+
+def grid_lookup(G, region, step=0.5):
+    """Bilinear lookup of a grid G[y, x] over [-region, region]^2 (no NaN) at arrays x, y."""
+    from scipy.ndimage import map_coordinates
+
+    def f(x, y):
+        x, y = np.asarray(x, float), np.asarray(y, float)
+        c = [np.atleast_1d(y + region) / step, np.atleast_1d(x + region) / step]
+        return map_coordinates(G, c, order=1, mode="nearest").reshape(x.shape)
+    return f
+
+
+def cave_rock_points(objs, region, zcap, rng, floor_z, density=200.0, tol=0.3):
+    """Samples on the cave rock (walls, roof, pillars) in the region: the terrain mesh except its floor, i.e. except
+    samples within tol of the floor of their column (floor_z: NaN-free floor lookup)."""
+    deps = bpy.context.evaluated_depsgraph_get()
+    out = [np.zeros((0, 3))]
+    for o in objs:
+        oe = o.evaluated_get(deps)
+        P = sample_mesh_local(oe.to_mesh(), density, rng, max_verts=0)
+        oe.to_mesh_clear()
+        M = mat_world(o.matrix_world)
+        P = P @ M[:3, :3].T + M[:3, 3]
+        P = P[(np.abs(P[:, 0]) <= region) & (np.abs(P[:, 1]) <= region) & (P[:, 2] <= zcap)]
+        out.append(P[P[:, 2] > floor_z(P[:, 0], P[:, 1]) + tol])
+    return np.concatenate(out)
+
+
+def cave_cutaway(objs, floor_z, cut=CAVE_CUT):
+    """For the top view of a cave: each terrain mesh swapped for a copy without the faces more than `cut` above the
+    floor (roof, upper walls, any ground above), objects wholly above the cut and the haze volume hidden. Returns the
+    function that undoes it."""
+    import bmesh
+    swapped, hidden = [], []
+    for o in objs:
+        me = o.data.copy()
+        C = np.empty(len(me.polygons) * 3)
+        me.polygons.foreach_get("center", C)
+        M = mat_world(o.matrix_world)
+        C = C.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3]
+        kill = np.nonzero(C[:, 2] > floor_z(C[:, 0], C[:, 1]) + cut)[0]
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(bm, geom=[bm.faces[i] for i in kill], context="FACES")
+        bm.to_mesh(me)
+        bm.free()
+        swapped.append((o, o.data))
+        o.data = me
+    tnames = {o.name for o in objs}
+    for o in bpy.data.objects:
+        if o.hide_render or o.name in tnames or o.type not in ("MESH", "LIGHT", "CURVE"):
+            continue
+        if o.name.startswith("atmosphere"):
+            o.hide_render = True
+            hidden.append(o)
+            continue
+        bw = np.array([list(o.matrix_world @ Vector(c)) for c in o.bound_box])
+        cx, cy = bw[:, :2].mean(0)
+        if bw[:, 2].min() > float(floor_z(cx, cy)) + cut:
+            o.hide_render = True
+            hidden.append(o)
+
+    def undo():
+        for o, me in swapped:
+            o.data = me
+        for o in hidden:
+            o.hide_render = False
+    print(f"cut-away: terrain above floor + {cut} m removed, {len(hidden)} objects above it hidden", flush=True)
+    return undo
 
 
 def is_hidden(o):
@@ -793,6 +960,7 @@ def main():
     a.out.mkdir(parents=True, exist_ok=True)
     box = json.loads(a.box.read_text())
     half, region = box["half"], box["region"]
+    cave = box.get("scene_type") == "cave"
     rng = np.random.default_rng(a.seed)
     bpy.ops.wm.open_mainfile(filepath=str(a.scene))
     show_render_visible()
@@ -822,12 +990,20 @@ def main():
                 print("water body re-shaded", o.name, flush=True)
     tobjs = terrain_objects()
     print("terrain objects", [o.name for o in tobjs])
-    zg = ground_fn(tobjs)
+    zg = CaveFloor(tobjs, cave_tag_ids(a.scene)) if cave else ground_fn(tobjs)
 
     # ground grid over the region (for AGL and the band map)
     g = np.arange(-region, region + 1e-6, 0.5)
-    GZ = np.array([[zg(x, y) if zg(x, y) is not None else np.nan for x in g] for y in g])
+    GZ = np.array([[np.nan if (z := zg(x, y)) is None else z for x in g] for y in g])
     zcap = np.nanmax(GZ) + 12.0
+    if cave:
+        # columns without a floor are solid rock; heights over the ground there use the nearest floor
+        from scipy.ndimage import distance_transform_edt as edt
+        nan = np.isnan(GZ)
+        GZf = GZ[tuple(edt(nan, return_distances=False, return_indices=True))]
+        floor_z = grid_lookup(GZf, region)
+        print(f"cave floor: {100 * (1 - nan.mean()):.0f} % of the region's columns, z {np.nanmin(GZ):.1f} to "
+              f"{np.nanmax(GZ):.1f}", flush=True)
     FOG_GEOM.update(half_xy=region + 40.0, z0=float(np.nanmin(GZ)) - 5.0, z1=float(np.nanmax(GZ)) + 35.0)
     def ground_grid(x, y):
         i = int(round((x + region) / 0.5))
@@ -838,6 +1014,10 @@ def main():
         return None
 
     P, L, names = sample_scene(region, zcap, rng, ground=ground_grid)
+    if cave:
+        Pr = cave_rock_points(tobjs, region, zcap, rng, floor_z)
+        P = np.concatenate([P, Pr])
+        L = np.concatenate([L, np.full(len(Pr), names.setdefault("cave_rock", len(names)), np.int16)])
     print(f"sampled {len(P)} obstacle samples from {len(names)} families in {time.time() - t0:.0f} s")
 
     wire_objs = []
@@ -859,7 +1039,7 @@ def main():
 
     P, L = voxelize(P, L)
     gi = np.clip(((P[:, :2] + region) / 0.5).round().astype(int), 0, len(g) - 1)
-    agl = P[:, 2] - GZ[gi[:, 1], gi[:, 0]]
+    agl = P[:, 2] - (floor_z(P[:, 0], P[:, 1]) if cave else GZ[gi[:, 1], gi[:, 0]])
     np.savez_compressed(a.out / "cloud.npz", points=P.astype(np.float32), label=L, agl=agl.astype(np.float32),
                         names=json.dumps(names), ground_grid=GZ.astype(np.float32), grid_x=g.astype(np.float32))
 
@@ -871,12 +1051,17 @@ def main():
     inbox = (np.abs(P[:, 0]) < half) & (np.abs(P[:, 1]) < half)
     from scipy.ndimage import distance_transform_edt
 
+    if cave:
+        # cells whose column has no floor are rock at every height
+        ci = np.clip(np.round((-half + (np.arange(nb) + 0.5) * cell + region) / 0.5).astype(int), 0, len(g) - 1)
+        solid = nan[np.ix_(ci, ci)]
+
     def slice_occ(lo, hi):
         m = inbox & (agl >= lo) & (agl <= hi)
         o = np.zeros((nb, nb), bool)
         ij = np.clip(((P[m, :2] + half) / cell).astype(int), 0, nb - 1)
         o[ij[:, 1], ij[:, 0]] = True
-        return o
+        return o | solid if cave else o
 
     slices = {}
     for lo, hi in [(BAND[0], BAND[1]), (0.4, 1.0), FLY_SLICE, (3.0, 5.5)]:
@@ -903,6 +1088,8 @@ def main():
             "thin_points_frac": float(np.isin(L, [names.get("wires", -1)]).mean()),
             "ground_relief_m": float(np.nanmax(GZ) - np.nanmin(GZ)),
             "assets_in_box": asset_counts(half), "box_area_m2": float((2 * half) ** 2)}
+    if cave:
+        band["cave"] = cave_stats(zg, g, half)
     (a.out / "band.json").write_text(json.dumps(band, indent=1))
     np.save(a.out / "band_occ.npy", occ)
     print("band", json.dumps({k: v for k, v in band.items() if k != "families"}))
@@ -911,7 +1098,7 @@ def main():
         return
 
     backdrop = None
-    if not a.no_backdrop:
+    if not a.no_backdrop and not cave:
         # backdrop trees at the density measured inside the box (Infinigen's nominal density overstates it)
         td = band["assets_in_box"].get("TreeFactory", 0) / band["box_area_m2"]
         backdrop = add_backdrop(zg, box.get("terrain_bound", region + 4.0), region, rng, td)
@@ -982,7 +1169,10 @@ def main():
     bpy.context.scene.camera = top
     bpy.context.scene.cycles.samples = 16
     t1 = time.time()
+    undo = cave_cutaway(tobjs, floor_z) if cave else None
     render_to(a.out / "top.png", (a.top_res, a.top_res))
+    if undo is not None:
+        undo()
     timings.append({"view": "top", "look": "A0", "s": round(time.time() - t1, 1)})
 
     rec = {"views": views, "timings": timings, "camera": {"w": W, "h": H, "hfov_deg": HFOV},

@@ -63,3 +63,10 @@ densities, gin overrides, seconds) and `<out>/scene/scene.blend` with Infinigen'
 | `band_occ.npy` | the 1-3 m slice's occupancy grid (25 cm cells) |
 | `views.json` | camera poses (position, yaw, height over ground), render timings, camera model (640 x 480, 87 deg), backdrop |
 | `v<k>_<look>.png`, `v<k>_depth.npy`, `top.png` | drone-eye renders per look (A0 midday, A1 low sun ahead, A2 haze, A3 dusk), metric z-depth (float16, the haze volume hidden), top-down orthographic render |
+
+A cave box (`scene_type` "cave", see docs/infinigen.md "Caves") adds `cave` to box.json (measured void volume and z
+range, the terrain z bounds `terrain_z`) and differs in views/: the ground is the cave floor (`ground_grid` NaN where a
+column has no roofed void: solid rock, ground above the cave, an entrance), the cloud also holds the cave's walls and
+roof as label `cave_rock` (`agl` measured from the nearest floor where a column has none), columns without a floor are
+blocked in every slice, band.json gets a `cave` block (floor share, floor heights, headroom percentiles, multi-level
+and open-top shares), and `top.png` is a cut-away (terrain more than 2 m above the floor removed).

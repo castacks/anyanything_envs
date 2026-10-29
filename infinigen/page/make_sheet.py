@@ -56,6 +56,12 @@ def plan_png(sc: Path, dst: Path, views, box, fly=(1.0, 3.0)):
     any_occ[ij[:, 1], ij[:, 0]] = True
     band_occ = np.zeros((n, n), bool)
     band_occ[ij[inband, 1], ij[inband, 0]] = True
+    if box.get("scene_type") == "cave":
+        # a cave's columns without a floor (ground_grid NaN) are rock at every height
+        gx = z["grid_x"]
+        ci = np.clip(np.round((-region + (np.arange(n) + 0.5) * cell - gx[0]) / (gx[1] - gx[0])).astype(int), 0,
+                     len(gx) - 1)
+        band_occ |= np.isnan(z["ground_grid"])[np.ix_(ci, ci)]
     img = np.ones((n, n, 3))
     img[any_occ] = matplotlib.colors.to_rgb(LIGHT)
     img[band_occ] = matplotlib.colors.to_rgb(DARK)
