@@ -174,11 +174,12 @@ Traps:
    rooms, and the doorways in them, belong to no room (hence the closed footprint above).
 3. **Window glass** is in the cloud (a drone cannot pass it) but almost fully transparent to camera rays, so the
    depth image sees through windows to the sky.
-4. **A "lite" door closes when opened.** With `--doors open` the smoke house's bathroom door (`LiteDoorFactory`) was
-   turned 98 deg about its hinge and still lies in the wall plane across its 0.7 m opening (door voxels from the
-   floor to 2.9 m in the doorway), so the bathroom is sealed; the two panel doors swing into their rooms as meant.
-   Its leaf runs along the model's y axis, 90 deg from what `populate_doors` assumes. Not fixed: check
-   `components_free` / `rooms_in_largest_component_free` in `band.json` before flying room to room.
+4. **An "open" door can still fill its doorway.** With `--doors open` the smoke house's bathroom door
+   (`LiteDoorFactory`) was turned 98 deg and still lies across its 0.7 m opening, on the bathroom side of the wall
+   (door voxels from the floor to 2.9 m in the doorway cells), so the bathroom is sealed; the bedroom and entrance
+   doors (`PanelDoorFactory`, turned 165 and 127 deg) stand in their rooms. Why this door ends up there is not
+   established (a probe of the door meshes was inconclusive). Check `components_free` /
+   `rooms_in_largest_component_free` in `band.json` before flying room to room.
 5. **The floor is not at z = 0.** Each room is its outline extruded to the wall height and shelled inwards by half a
    wall thickness, so the floor is at `floor_z` (0.15 m here) and the ceiling at wall height minus that; use
    `box.json`, which reads both from the meshes.
