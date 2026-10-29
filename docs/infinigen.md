@@ -38,6 +38,22 @@ python infinigen/page/make_sheet.py --scenes out/plain_7 --out out/page
 python infinigen/page/make_page.py --assets out/page
 ```
 
+Extra obstacles, Wenshan-style floaters and grounded clutter, are added after generation, so one base scene
+gives a whole density ladder:
+
+```bash
+python infinigen/scatter_obstacles.py --scene out/plain_7/scene/scene.blend --box out/plain_7/box.json \
+    --cloud out/plain_7/views/cloud.npz --out out/plain_7/floaters_80 --floaters 80 --ground 20
+python infinigen/box_views.py --scene out/plain_7/floaters_80/scene.blend --box out/plain_7/box.json \
+    --out out/plain_7/floaters_80/views --n-views 3 --samples 32
+```
+
+They come from Infinigen's own procedural factories (chairs, sofas, tables, lamps, TVs, microwaves,
+dishwashers, bookcases, rocks, boulders, cacti), so none is an asset our training data has seen; the floating
+placement itself mirrors Wenshan's scenes, so keep a variant without floaters for a clean out-of-distribution
+score. Placement rejects anything within an object's bounding radius plus `--gap` of the scene's cloud or of
+another placement. 80 floaters + 20 grounded took 12.5 min CPU (36 prototypes spawned, a 3 GB scene saved).
+
 `--water type` keeps the scene type's water body (river, coast, arctic); otherwise ponds are off.
 `box_views.py --wires` adds thin structures: a pole line with two sagging wires and guy wires across the box,
 and ropes between trunks. `--depth-only` re-renders the depth of existing views.

@@ -8,7 +8,7 @@ in the same format, so a planner, a labeller or a policy can fly any of them.
 |---|---|---|
 | [`envgen.primitives`](envgen/primitives) | Primitive obstacle patches: 22 single-obstacle families (walls, slots, windows, floating boxes and bars, rooms, rings, tree stands, clutter, wires...), corridors of several obstacles (tier B) and arenas mixing many (tier C). | plain Python (numpy, scipy) |
 | [`blender/`](blender) | Blender courses: a patch rebuilt as meshes with the same geometry and dressed as a real place, either one of 4 themes or one of 13 place kits (2 indoor). Asset libraries from Poly Haven and ambientCG (CC0) plus a curated Objaverse slice. | Blender 5.2 |
-| [`infinigen/`](infinigen) | Infinigen nature scenes (forest, plain, river, canyon, cliff, mountain, desert, arctic, snowy mountain, coast) generated as a fully populated square flight box, with collision cloud, flight-height plan and drone-eye renders in four lighting looks. | Infinigen 1.x (bpy 4.2) |
+| [`infinigen/`](infinigen) | Infinigen nature scenes (forest, plain, river, canyon, cliff, mountain, desert, arctic, snowy mountain, coast) generated as a fully populated square flight box, with collision cloud, flight-height plan and drone-eye renders in four lighting looks; optional Wenshan-style floating obstacles from Infinigen's procedural asset factories. | Infinigen 1.x (bpy 4.2) |
 
 Wenshan's static Blender scenes are not part of this repo (they are hers).
 
