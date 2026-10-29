@@ -52,9 +52,11 @@ def parse():
 # ---------------------------------------------------------------- scene helpers
 
 def terrain_objects():
-    objs = [o for o in bpy.data.objects if o.type == "MESH" and o.name.startswith("OpaqueTerrain")]
+    """The rendered ground: Infinigen's fine terrain mesh, OpaqueTerrain_fine in most scene types,
+    CollectiveTransparentTerrain_fine (ice) in arctic."""
+    objs = [o for o in bpy.data.objects if o.type == "MESH" and "Terrain" in o.name]
     fine = [o for o in objs if o.name.endswith("_fine")]
-    return fine or objs
+    return fine or [o for o in objs if o.name.startswith("OpaqueTerrain")]
 
 
 def ground_fn(objs):
@@ -219,7 +221,7 @@ def sample_scene(region, zcap, rng, density=200.0, skip_terrain=True, ground=Non
         v = skip_cache.get(nm)
         if v is None:
             v = (any(s in nm for s in SKIP_NAMES) or nm in placeholder_objs
-                 or (skip_terrain and nm.startswith("OpaqueTerrain")) or orig.hide_render
+                 or (skip_terrain and "Terrain" in nm) or orig.hide_render
                  or any(cn in coll_hidden for cn in obj_colls.get(nm, [])))
             skip_cache[nm] = v
         return v
@@ -594,6 +596,35 @@ def asset_counts(half):
     return out
 
 
+def water_material(o):
+    """Infinigen's water shader renders as the error colour (magenta) on the UniformMesher's liquid mesh, and its
+    flat facets mirror the sky in shards: a plain transmissive water with a ripple bump, smooth-shaded."""
+    m = bpy.data.materials.get("envgen_water")
+    if m is None:
+        m = bpy.data.materials.new("envgen_water")
+        m.use_nodes = True
+        nt = m.node_tree
+        bsdf = nt.nodes.get("Principled BSDF")
+        bsdf.inputs["Base Color"].default_value = (0.02, 0.045, 0.045, 1.0)
+        bsdf.inputs["Roughness"].default_value = 0.04
+        bsdf.inputs["IOR"].default_value = 1.333
+        for k in ("Transmission Weight", "Transmission"):
+            if k in bsdf.inputs:
+                bsdf.inputs[k].default_value = 0.9
+                break
+        noise = nt.nodes.new("ShaderNodeTexNoise")
+        noise.inputs["Scale"].default_value = 6.0
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.inputs["Strength"].default_value = 0.15
+        bump.inputs["Distance"].default_value = 0.02
+        nt.links.new(noise.outputs["Fac"], bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    o.data.materials.clear()
+    o.data.materials.append(m)
+    for poly in o.data.polygons:
+        poly.use_smooth = True
+
+
 # ---------------------------------------------------------------- backdrop
 
 def ground_below_horizon(color=(0.035, 0.04, 0.025)):
@@ -621,6 +652,40 @@ def ground_below_horizon(color=(0.035, 0.04, 0.025)):
         mix.inputs["Color1"].default_value = bg.inputs["Color"].default_value
     mix.inputs["Color2"].default_value = (*color, 1.0)
     nt.links.new(mix.outputs[0], bg.inputs["Color"])
+
+
+def copy_edge_attributes(src, me, V, e, band=2.0):
+    """Infinigen's terrain material mixes its surfaces by per-vertex attributes of the terrain mesh; on a mesh
+    without them it renders the error colour (magenta). Give each skirt vertex the attributes of the nearest
+    terrain vertex near the square's edge, so the ground continues outward."""
+    from scipy.spatial import cKDTree
+    sm = src.data
+    nv = len(sm.vertices)
+    co = np.empty(nv * 3)
+    sm.vertices.foreach_get("co", co)
+    M = np.array([list(r) for r in src.matrix_world])
+    co = co.reshape(-1, 3) @ M[:3, :3].T + M[:3, 3]
+    edge = np.nonzero(np.maximum(np.abs(co[:, 0]), np.abs(co[:, 1])) > e - band)[0]
+    if len(edge) == 0:
+        return 0
+    _, nn = cKDTree(co[edge, :2]).query(np.asarray(V)[:, :2])
+    src_idx = edge[nn]
+    width = {"FLOAT": 1, "INT": 1, "BOOLEAN": 1, "INT8": 1, "FLOAT_VECTOR": 3, "FLOAT_COLOR": 4, "BYTE_COLOR": 4,
+             "FLOAT2": 2}
+    key = {"FLOAT_COLOR": "color", "BYTE_COLOR": "color", "FLOAT_VECTOR": "vector", "FLOAT2": "vector"}
+    n = 0
+    for at in list(sm.attributes):
+        if at.domain != "POINT" or at.name.startswith(".") or at.name == "position" or at.data_type not in width:
+            continue
+        w = width[at.data_type]
+        dt = np.int32 if at.data_type in ("INT", "INT8") else (bool if at.data_type == "BOOLEAN" else np.float32)
+        buf = np.empty(nv * w, dtype=dt)
+        at.data.foreach_get(key.get(at.data_type, "value"), buf)
+        na = me.attributes.new(at.name, at.data_type, "POINT")
+        na.data.foreach_set(key.get(at.data_type, "value"), buf.reshape(nv, w)[src_idx].reshape(-1))
+        n += 1
+    print(f"skirt: {n} terrain attributes copied from the edge", flush=True)
+    return n
 
 
 def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=90.0, step=1.5):
@@ -670,6 +735,7 @@ def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=90.0, step=1.5)
     fine = terrain_objects()
     if fine and fine[0].data.materials:
         me.materials.append(fine[0].data.materials[0])
+        copy_edge_attributes(fine[0], me, V, e)
     for p in me.polygons:
         p.use_smooth = True
 
@@ -749,6 +815,11 @@ def main():
             if o.name.startswith("liquid"):
                 o.hide_render = True
                 print("hid water body", o.name, flush=True)
+    else:
+        for o in bpy.data.objects:
+            if o.name.startswith("liquid") and o.type == "MESH" and not o.hide_render:
+                water_material(o)
+                print("water body re-shaded", o.name, flush=True)
     tobjs = terrain_objects()
     print("terrain objects", [o.name for o in tobjs])
     zg = ground_fn(tobjs)
