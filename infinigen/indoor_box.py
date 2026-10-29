@@ -79,7 +79,6 @@ def house_layout():
     unique_assets:room_floor / room_ceiling, objects '<room>.floor' / '<room>.ceiling'): each room's floor outline,
     area and floor height from its floor faces, its ceiling height from its ceiling faces."""
     import bpy
-    import shapely
     from shapely.geometry import Polygon
     from shapely.ops import unary_union
 
@@ -95,7 +94,7 @@ def house_layout():
             name = o.name.rsplit(".", 1)[0]
             r = rooms.setdefault(name, {"name": name, "type": name.split("_")[0]})
             if part == "floor":
-                shape = unary_union([Polygon(t[:, :2]) for t in tri if Polygon(t[:, :2]).area > 1e-6])
+                shape = unary_union([p for p in (Polygon(t[:, :2]) for t in tri) if p.area > 1e-6])
                 shape = shape.buffer(0.005).buffer(-0.005).simplify(0.01)
                 polys = list(shape.geoms) if hasattr(shape, "geoms") else [shape]
                 polys.sort(key=lambda p: -p.area)
@@ -116,10 +115,9 @@ def house_layout():
     for part in ("wall", "exterior"):
         col = bpy.data.collections.get(f"unique_assets:room_{part}")
         for o in (col.objects if col is not None else []):
-            if o.type == "MESH":
-                bb = np.array([list(o.matrix_world @ v.co) for v in o.data.vertices]) if len(o.data.vertices) else None
-                if bb is not None:
-                    walls.append(np.r_[bb.min(0), bb.max(0)])
+            V = world_triangles(o).reshape(-1, 3) if o.type == "MESH" else np.zeros((0, 3))
+            if len(V):
+                walls.append(np.r_[V.min(0), V.max(0)])
     walls = np.array(walls)
     floor_z = float(np.median([r["floor_z"] for r in rooms]))
     ceil_z = float(np.median([r["ceiling_z"] for r in rooms if "ceiling_z" in r]))
@@ -129,8 +127,7 @@ def house_layout():
         "house_bounds": ([round(float(v), 3) for v in np.r_[walls[:, :3].min(0), walls[:, 3:].max(0)]]
                          if len(walls) else None),
         "floor_z": round(floor_z, 3), "ceiling_z": round(ceil_z, 3), "ceiling_height_m": round(ceil_z - floor_z, 3),
-        "floor_area_m2": round(float(shapely.area(unary_union(
-            [Polygon(r["polygon"]) for r in rooms]))), 2),
+        "floor_area_m2": round(float(unary_union([Polygon(r["polygon"]) for r in rooms]).area), 2),
     }
 
 

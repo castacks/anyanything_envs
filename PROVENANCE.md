@@ -79,7 +79,9 @@ evaluation fields).
 | `envgen/primitives/sim_sdf.py` | `src/superfly_expert_sampler/sim_sdf.py` | copied; unchanged |
 | `envgen/primitives/spec.py` | `scripts/data_make_dataset.py (`build_spec`)` | rewritten as a small module with the same dispatch |
 | `envgen/primitives/tiers.py` | `src/superfly_expert_sampler/tiers.py` | imports repointed to the package |
-| `infinigen/box_views.py` | `gs2 flightbox/forest_views.py` | renamed; docstring |
+| `infinigen/box_views.py` | `gs2 flightbox/forest_views.py` | renamed; docstring; `sample_scene` takes `small_m` and `family` (defaults unchanged) for the indoor views |
+| `infinigen/indoor_box.py` | `new` | Infinigen-Indoors house driver |
+| `infinigen/indoor_views.py` | `new` | indoor flight-box views on top of `box_views.py` |
 | `infinigen/nature_box.py` | `gs2 flightbox/forest_box.py` | renamed (any scene type); docstring |
 | `infinigen/page/make_page.py` | `gs2 flightbox/make_page.py` | paths in the docstring |
 | `infinigen/page/make_sheet.py` | `gs2 flightbox/make_sheet.py` | paths in the docstring |
