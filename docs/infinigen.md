@@ -50,8 +50,8 @@ python infinigen/box_views.py --scene out/plain_7/floaters_80/scene.blend --box 
 
 They come from Infinigen's own procedural factories (chairs, sofas, tables, lamps, TVs, microwaves,
 dishwashers, bookcases, rocks, boulders, cacti), so none is an asset our training data has seen; the floating
-placement itself mirrors Wenshan's scenes, so keep a variant without floaters for a clean out-of-distribution
-score. Placement rejects anything within an object's bounding radius plus `--gap` of the scene's cloud or of
+placement itself mirrors Wenshan's scenes, which are in our training data, so **the out-of-distribution test
+set does not use floaters** (decision 2026-10-29); the script stays for other uses. Placement rejects anything within an object's bounding radius plus `--gap` of the scene's cloud or of
 another placement. 80 floaters + 20 grounded took 12.5 min CPU (36 prototypes spawned, a 3 GB scene saved).
 
 `--water type` keeps the scene type's water body (river, coast, arctic); otherwise ponds are off.
