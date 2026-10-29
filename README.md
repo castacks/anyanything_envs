@@ -77,6 +77,10 @@ python blender/assets.py --root $BLENDER_ASSETS --theme yard       # v1 library 
 ```
 
 Poly Haven and ambientCG are CC0. Objaverse items keep their own licences, which the fetcher records per item.
+Default locations, each overridable: `$BLENDER` (Blender 5.2 binary), `$BLENDER_LIBRARY`
+(`~/.cache/envgen/library`, the kits' v2 library, ~37 GB with the Objaverse slice), `$BLENDER_ASSETS`
+(`~/.cache/envgen/assets_v1`, the themes' v1 library). `$SUPERFLY_BAND` selects the altitude band the planner
+and the cloud top follow (`envgen/band.py`; default v9).
 
 ## Outputs
 

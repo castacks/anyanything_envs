@@ -13,8 +13,7 @@ the role(s) the course builder may use it in, the source and the licence.
 The roles are hand-curated below per theme -- the API's categories say what
 an object *is*, not whether a drone can meaningfully fly round it.
 
-Standard library only: this runs on airstation03's system python, on gs2, or
-inside an OSMO job without a venv.
+Standard library only: it runs on any system Python, without a venv.
 """
 
 from __future__ import annotations

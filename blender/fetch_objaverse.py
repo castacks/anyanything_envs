@@ -4,7 +4,7 @@ textured, real-world-scaled street/port/farm/park/site objects that Poly
 Haven lacks (cars, vans, trucks, buses, forklifts, tractors, diggers, bikes,
 traffic lights, signs, cones, skips, trolleys, playground kit, benches, ...).
 
-    PY=/mnt/data/blender/objaverse_venv/bin/python        # objaverse trimesh pillow numpy
+    PY=<venv with objaverse trimesh pillow numpy>/bin/python
     $PY blender/fetch_objaverse.py index                  # metadata -> compact index (once)
     $PY blender/fetch_objaverse.py select                 # candidates per category (explore)
     $PY blender/fetch_objaverse.py prescreen              # Sketchfab-thumbnail sheets of the candidates
@@ -74,8 +74,8 @@ import sys
 import time
 import urllib.request
 
-CACHE = Path("/mnt/data/blender/objaverse_cache")
-ROOT = Path("/mnt/data/blender/assets")
+CACHE = Path(os.environ.get("OBJAVERSE_CACHE", "~/.cache/envgen/objaverse_cache")).expanduser()
+ROOT = Path(os.environ.get("BLENDER_LIBRARY", "~/.cache/envgen/library")).expanduser()
 HF = "https://huggingface.co/datasets/allenai/objaverse/resolve/main"
 LICENCE_NAMES = {"cc0": "CC0-1.0", "by": "CC-BY-4.0", "by-sa": "CC-BY-SA-4.0", "by-nc": "CC-BY-NC-4.0",
                  "by-nc-sa": "CC-BY-NC-SA-4.0", "by-nd": "CC-BY-ND-4.0", "by-nc-nd": "CC-BY-NC-ND-4.0"}
@@ -1213,10 +1213,10 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-seen", action="store_true", help="select: skip earlier rounds' candidates")
     ap.add_argument("--recat", default="", help="prescreen number -> spec, e.g. '8:motorcycle,491:pallet'")
     ap.add_argument("--processes", type=int, default=8)
-    ap.add_argument("--blender", type=Path, default=Path("/mnt/data/blender/blender-5.2.2-linux-x64/blender"))
+    ap.add_argument("--blender", type=Path, default=Path(os.environ.get("BLENDER", "blender")))
     a = ap.parse_args(argv)
     a.cache.mkdir(parents=True, exist_ok=True)
-    os.environ.setdefault("HF_HOME", "/mnt/data/hf-home")
+    os.environ.setdefault("HF_HOME", str(Path("~/.cache/huggingface").expanduser()))
     {"index": cmd_index, "select": cmd_select, "prescreen": cmd_prescreen, "fetch": cmd_fetch,
      "finalise": cmd_finalise}[a.step](a)
     return 0

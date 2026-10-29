@@ -11,8 +11,8 @@ captioned with the kit, HDRI, triangle and cloud counts -- plus the build log.
 The level sets the same knobs as a batch (``batch.LEVEL_KNOBS``).
 
 Environment: ``BLENDER`` (default ``batch.find_blender()``: gs2's
-/mnt/data/blender/blender-5.2.2-linux-x64/blender, else airstation03's ~/opt/...),
-``BLENDER_LIBRARY`` (default /mnt/data/blender/assets).
+$BLENDER, else ~/opt/blender-5.2.2-linux-x64/blender),
+``BLENDER_LIBRARY`` (default ~/.cache/envgen/library).
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ def main(argv=None) -> int:
     ap.add_argument("--extra", nargs=argparse.REMAINDER, default=[], help="more build_course.py args")
     a = ap.parse_args(argv)
     blender = find_blender()
-    lib = os.environ.get("BLENDER_LIBRARY", "/mnt/data/blender/assets")
+    lib = str(Path(os.environ.get("BLENDER_LIBRARY", "~/.cache/envgen/library")).expanduser())
     a.out.mkdir(parents=True, exist_ok=True)
     k = LEVEL_KNOBS[a.level]
     cmd = [blender, "-b", "--factory-startup", *BLENDER_PY, "-t", str(a.threads), "-P",

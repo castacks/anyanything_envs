@@ -3,7 +3,7 @@
 ambientCG, every item tagged so a place kit can ask for "an urban overcast
 sky" or "a paving-stone ground" instead of naming files.
 
-    python blender/fetch_library.py --root /mnt/data/blender/assets [--only ph-models ph-hdris ph-textures acg]
+    python blender/fetch_library.py --root $BLENDER_LIBRARY [--only ph-models ph-hdris ph-textures acg]
 
 Sources (both CC0, real-world scale):
 

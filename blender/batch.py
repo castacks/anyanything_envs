@@ -59,9 +59,9 @@ import time
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 #: where Blender 5.2.2 lives, first hit wins (``$BLENDER`` overrides)
-BLENDER_CANDIDATES = ("/mnt/data/blender/blender-5.2.2-linux-x64/blender", "~/opt/blender-5.2.2-linux-x64/blender")
+BLENDER_CANDIDATES = ("~/opt/blender-5.2.2-linux-x64/blender", "/mnt/data/blender/blender-5.2.2-linux-x64/blender")
 #: the v1 theme assets (``assets.py``), first hit wins (``$BLENDER_ASSETS`` overrides)
-ASSETS_CANDIDATES = ("~/.cache/blender_assets", "/mnt/data/blender/assets_v1")
+ASSETS_CANDIDATES = ("~/.cache/envgen/assets_v1", "~/.cache/blender_assets", "/mnt/data/blender/assets_v1")
 
 
 def _first(env: str, candidates, fallback_which: str | None = None) -> str:
@@ -90,7 +90,7 @@ BLENDER_ENV = {"PYTHONHASHSEED": "0", "PYTHONPATH": "", "PYTHONHOME": "", "PYTHO
 BLENDER_PY = ["--python-use-system-env", "--python-exit-code", "1"]
 ASSETS = Path(_first("BLENDER_ASSETS", ASSETS_CANDIDATES))
 #: the v2 library (fetch_library.py + inspect_assets.py) the place kits draw from
-LIBRARY = Path(os.environ.get("BLENDER_LIBRARY", "/mnt/data/blender/assets"))
+LIBRARY = Path(os.environ.get("BLENDER_LIBRARY", "~/.cache/envgen/library")).expanduser()
 THEMES = ["yard", "woodland", "warehouse", "plaza"]
 FAMILIES = ["wall_offset", "wall_sym", "float_box", "float_bar", "wall_slot", "window", "room", "bars_lintel",
             "pillar", "slab", "ring", "stand_sparse", "stand_medium", "stand_dense"]
@@ -534,7 +534,7 @@ def scene_knobs(s: dict) -> dict:
             "start_keepout": k.get("start_keepout", 0.0)}
 
 
-# --- build (gs2 CPU, or airstation03) -----------------------------------------------------------
+# --- build -----------------------------------------------------------
 
 def build_cmd(s: dict, out: Path, spec: Path, a) -> list:
     """The ``build_course.py`` command line of one plan row (run it with
@@ -736,7 +736,7 @@ def main(argv=None) -> int:
     ap.add_argument("--pack-max-res", type=int, default=0,
                     help="(build) downscale packed 8-bit textures to this longer side (1024 for the 640x480 camera)")
     ap.add_argument("--pack-cache", type=Path, default=None,
-                    help="(build) share downscaled textures between builds here (e.g. /mnt/data/blender/pack_cache)")
+                    help="(build) share downscaled textures between builds here (e.g. ~/.cache/envgen/pack_cache)")
     ap.add_argument("--require-clean", action="store_true",
                     help="(build) the default now: refuse a dirty checkout, kit env hook or salted hash (contract 6)")
     ap.add_argument("--allow-dirty", action="store_true",

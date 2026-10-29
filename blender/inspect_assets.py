@@ -1,7 +1,7 @@
 """Split every model file of the v2 library into pieces and thumbnail them.
 
     blender -b --factory-startup -P blender/inspect_assets.py -- \
-        --root /mnt/data/blender/assets [--shard 0/4] [--thumbs] [--threads 4]
+        --root $BLENDER_LIBRARY [--shard 0/4] [--thumbs] [--threads 4]
     python3 blender/inspect_assets.py --merge --root ...      # shards -> catalog.json + sheets
 
 Another library file (e.g. ``fetch_objaverse.py``'s) goes to its own catalog:

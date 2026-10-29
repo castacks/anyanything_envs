@@ -3,7 +3,7 @@
     blender -b --factory-startup -P blender/build_course.py -- \
         --spec <spec.json> --assets ~/.cache/blender_assets --out <course dir> [--preview]
     blender -b --factory-startup -t 6 -P blender/build_course.py -- \
-        --spec <spec.json> --kit street --assets /mnt/data/blender/assets --out <course dir> \
+        --spec <spec.json> --kit street --assets $BLENDER_LIBRARY --out <course dir> \
         --cpu --threads 6 --pack --pack-max-res 1024 --require-clean      # a pipeline build
 
 The patch spec (``blender/dump_spec.py``, i.e. ``draw_states.PatchSpec``) is
@@ -1184,7 +1184,7 @@ def main() -> None:
                     "(0 = pack as they are; 1024 for the 640x480 camera). The cloud is sampled first, unaffected")
     ap.add_argument("--pack-quality", type=int, default=90, help="JPEG quality of the downscaled maps")
     ap.add_argument("--pack-cache", type=Path, default=None,
-                    help="keep downscaled library maps here for later builds (e.g. /mnt/data/blender/pack_cache)")
+                    help="keep downscaled library maps here for later builds (e.g. ~/.cache/envgen/pack_cache)")
     ap.add_argument("--cloud-voxel", type=float, default=CLOUD_VOXEL,
                     help=f"obstacle cloud voxel, m (default {CLOUD_VOXEL}; batch 1 was 0.08)")
     ap.add_argument("--cloud-zmax", type=float, default=CLOUD_ZMAX,
