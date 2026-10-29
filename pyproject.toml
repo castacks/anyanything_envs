@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "envgen"
+dynamic = ["version"]
+description = "Procedural environments for drone navigation: primitive patches, Blender courses, Infinigen flight boxes"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "scikit-fmm>=2023.4"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+pages = ["matplotlib>=3.6", "pillow>=10"]
+
+[tool.setuptools.dynamic]
+version = {attr = "envgen.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["envgen*"]

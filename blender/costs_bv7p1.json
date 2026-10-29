@@ -1,0 +1,26 @@
+{
+ "default": 38.3,
+ "groups": {
+  "alley": 47.5,
+  "backyard": 24.6,
+  "coast": 38.3,
+  "construction": 41.8,
+  "farm": 30.9,
+  "forest": 21.1,
+  "garage": 61.3,
+  "industrial": 35.4,
+  "park": 11.4,
+  "port": 27.7,
+  "ruins": 40.5,
+  "street": 67.0,
+  "v1_plaza": 65.3,
+  "v1_warehouse": 62.1,
+  "v1_yard": 14.7,
+  "warehouse": 49.5
+ },
+ "tiers": {
+  "A": 1.0,
+  "B": 1.5,
+  "C": 1.19
+ }
+}

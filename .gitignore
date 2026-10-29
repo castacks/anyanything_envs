@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+out/
+*.blend
+*.blend1
+*.exr
+.pytest_cache/
