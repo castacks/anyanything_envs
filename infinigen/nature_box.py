@@ -46,6 +46,8 @@ def parse():
                     help="leave Infinigen's near terrain unsubdivided above this many faces (~53 KB/face otherwise)")
     ap.add_argument("--unique-trees", type=int, default=12, help="unique trees per species; the rest are copies")
     ap.add_argument("--unique-bushes", type=int, default=10, help="unique bushes per species; the rest are copies")
+    ap.add_argument("--smooth-angle", type=float, default=35.0,
+                    help="shade the fine terrain smooth except edges sharper than this, deg (0: flat facets)")
     ap.add_argument("--cave-min-void", type=float, default=300.0,
                     help="cave: stop after the terrain if the flight box holds less cave than this, m3")
     ap.add_argument("--configs", nargs="*", default=[])
@@ -255,6 +257,26 @@ def main():
             return sdf
 
         UniformMesher.kernel_caller = kernel_caller_closed
+
+    # The UniformMesher's --voxel facets read as a low-poly look up close (Infinigen's OcMesher refines near its camera
+    # instead). Shade the fine terrain smooth before Infinigen saves it, keeping edges sharper than --smooth-angle
+    # (rock edges) sharp.
+    import bpy
+    from infinigen.terrain.core import Terrain
+    _fine_terrain = Terrain.fine_terrain
+    smoothed = []
+
+    def fine_terrain_smooth(self, *args, **kwargs):
+        out = _fine_terrain(self, *args, **kwargs)
+        if a.smooth_angle > 0:
+            for o in bpy.data.objects:
+                if o.type == "MESH" and "Terrain" in o.name and o.name.endswith("_fine"):
+                    o.data.polygons.foreach_set("use_smooth", np.ones(len(o.data.polygons), bool))
+                    o.data.set_sharp_from_angle(angle=np.radians(a.smooth_angle))
+                    smoothed.append(o.name)
+        return out
+
+    Terrain.fine_terrain = fine_terrain_smooth
     logging.getLogger("infinigen").setLevel(logging.INFO)
     logging.getLogger("infinigen.core.nodes.node_wrangler").setLevel(logging.CRITICAL)
 
@@ -296,6 +318,7 @@ def main():
            "tree_density": a.tree_density, "bush_density": a.bush_density, "design_dist": a.design_dist,
            "voxel": a.voxel, "mesher_subdiv": n, "configs": args.configs, "overrides": overrides,
            "unique_trees": a.unique_trees, "unique_bushes": a.unique_bushes, "near_terrain": near,
+           "terrain_smooth": {"angle_deg": a.smooth_angle, "objects": smoothed},
            "seconds": round(time.time() - t0, 1)}
     if cave:
         rec["cave"] = cave_rec

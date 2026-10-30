@@ -50,6 +50,8 @@ def parse():
     ap.add_argument("--depth-only", action="store_true", help="re-render v<k>_depth.npy for <out>/views.json")
     ap.add_argument("--keep-water", action="store_true", help="keep Infinigen's water body (coarsely meshed by the "
                     "UniformMesher: renders as mirror facets)")
+    ap.add_argument("--smooth-angle", type=float, default=35.0, help="render the terrain smooth except edges sharper "
+                    "than this, deg, as nature_box saves it (scenes from before it did; 0: as saved)")
     return ap.parse_args(argv)
 
 
@@ -1105,6 +1107,12 @@ def main():
         td = band["assets_in_box"].get("TreeFactory", 0) / band["box_area_m2"]
         backdrop = add_backdrop(zg, box.get("terrain_bound", region + 4.0), region, rng, td)
 
+    if a.smooth_angle > 0:
+        # shading only: the cloud and the ground lookup use the geometry
+        for o in tobjs:
+            o.data.polygons.foreach_set("use_smooth", np.ones(len(o.data.polygons), bool))
+            o.data.set_sharp_from_angle(angle=math.radians(a.smooth_angle))
+
     # view poses: free spots (clearance >= 1.5 m in FLY_SLICE), 1.6-2.4 m AGL, facing the longest free sightline
     setup_render(a.samples, a.threads)
     cam = make_camera()
@@ -1179,7 +1187,7 @@ def main():
 
     rec = {"views": views, "timings": timings, "camera": {"w": W, "h": H, "hfov_deg": HFOV},
            "samples": a.samples, "threads": a.threads, "wires": [o.name for o in wire_objs], "backdrop": backdrop,
-           "seconds": round(time.time() - t0, 1)}
+           "terrain_smooth_deg": a.smooth_angle, "seconds": round(time.time() - t0, 1)}
     (a.out / "views.json").write_text(json.dumps(rec, indent=1))
     if a.wires:
         bpy.ops.wm.save_as_mainfile(filepath=str(a.out / "scene_wires.blend"), copy=True)

@@ -104,6 +104,12 @@ gs2 has; use 8 m or more.
    Infinigen wants in 7.5 min, slowing to 87 s each). `nature_box.py` binds
    `keep_cam_pose_proposal.min_terrain_distance=2`, base.gin's value and so a no-op for every other type; the
    camera no longer decides what is populated, and every stage reseeds.
+10. **Low-poly terrain up close.** The UniformMesher's faces are flat-shaded, so at drone height its 0.15 m facets
+    show on sand and slopes (Infinigen's OcMesher hides them by refining near its camera). `nature_box.py` shades
+    the fine terrain smooth before Infinigen saves it, keeping edges sharper than `--smooth-angle` (35 deg) sharp:
+    shading everything smooth makes the voronoi rocks, which are part of the terrain mesh, look melted, and the
+    angle keeps their edges. Shading only, so the cloud is unchanged. `box_views.py` applies the same at render time
+    (`--smooth-angle`, 0 renders the terrain as saved), so scenes generated before this render the same way.
 
 ## Scene types
 
