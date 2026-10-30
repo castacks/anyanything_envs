@@ -293,6 +293,9 @@ def main():
         # the camera no longer decides what is populated, but its pose search must still finish: snowy_mountain wants
         # all visible terrain >= 40 m away, which the square almost never offers. base.gin's 2 m (the other types').
         "keep_cam_pose_proposal.min_terrain_distance=2",
+        # river.gin grows slime mold on rocks and logs in 30 % of seeds: millimetre patterns no drone view resolves,
+        # and 75 of river 211's 101 min.
+        "populate_scene.slime_mold_chance=0.0",
     ]
     if a.tree_density is not None:
         overrides.append(f"compose_nature.tree_density={a.tree_density}")

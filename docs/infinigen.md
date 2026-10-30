@@ -58,6 +58,16 @@ another placement. 80 floaters + 20 grounded took 12.5 min CPU (36 prototypes sp
 `box_views.py --wires` adds thin structures: a pole line with two sagging wires and guy wires across the box,
 and ropes between trunks. `--depth-only` re-renders the depth of existing views.
 
+**Exposure.** Drone views are auto-exposed (`--exposure auto`, the default since 10-30): every frame is metered the
+way the closed-loop bench meters flight frames (centre-weighted, 0.75 log-average + 0.25 mean of the linear
+luminance, EV = log2(0.18 / meter) + 0.25, clamped to [-6, 10]) and its PNG saved from the same render at that EV, so
+a look changes the light and the camera follows, as the drone's does. A path tracer's noise scales with the signal,
+so a dim look renders as clean as a bright one. The EV and the meter are in `views.json` (`timings`).
+`--exposure fixed` renders each look at its own exposure (A1 +1, A3 +2), as before; under it the haze look came out
+near-black in about half of the first batch, where a dusty sky, a dimmed sun and a fog box reaching 35 m above
+the highest ground leave little light. The haze box also reaches past the backdrop now (`BACKDROP_RING` + 20 m);
+it used to stop at 65 m, so the backdrop ring from 65 to 90 m lay outside the fog, fully lit, and glowed on the horizon.
+
 ## What it costs (gs2: 32 cores, 62 GB, no GPU)
 
 | Step | Time |
@@ -65,6 +75,7 @@ and ropes between trunks. `--depth-only` re-renders the depth of existing views.
 | generate one 50 x 50 m populated square | 26-35 min CPU (terrain 3 min, placeholders 2-4, ground cover 10-15, trees 3-13, fine terrain 1) |
 | collision cloud and band map | ~2.5 min |
 | one 640 x 480 drone frame, CPU Cycles, 30 threads | 175-225 s at 32 spp (leaf instances and the haze volume dominate) |
+| batch 1 (10-30): 12 plain / river / forest squares at their scene type's defaults, design distance 8 | generation 15-101 min (median 28; the 101 was 75 min of slime mold, off since), scene files 1.5-9.9 GB, frames 30-301 s at 32 spp (median 95) |
 
 At design distance 4 m a scene with two tree species came to 11 GB and needed 53 GB to render, more than
 gs2 has; use 8 m or more.

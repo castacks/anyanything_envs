@@ -4,7 +4,8 @@ true depth, a top-down render. Optional thin wires (pole line with guy wires, ro
     python infinigen/box_views.py --scene <out>/scene/scene.blend --box <out>/box.json --out <out>/views \
         [--wires] [--n-views 4] [--looks A0 A1 A2 A3] [--samples 64] [--threads 30]
 
-Camera = the Starling front camera of our Blender screen (640 x 480, 87 deg horizontal FOV, level).
+Camera = the Starling front camera of our Blender screen (640 x 480, 87 deg horizontal FOV, level), auto-exposed per
+view like the closed-loop bench's flight frames (--exposure auto): the looks set the light, the meter sets the camera.
 Writes <out>/{cloud.npz, band.json, band_map.png?, views.json, v<k>_<look>.png, v<k>_depth.npy, top.png}.
 
 A cave box (box.json scene_type "cave") is flown inside the cave: the ground is the floor of the void Infinigen carved
@@ -52,6 +53,8 @@ def parse():
                     "UniformMesher: renders as mirror facets)")
     ap.add_argument("--smooth-angle", type=float, default=35.0, help="render the terrain smooth except edges sharper "
                     "than this, deg, as nature_box saves it (scenes from before it did; 0: as saved)")
+    ap.add_argument("--exposure", choices=["auto", "fixed"], default="auto", help="auto: meter every drone view the "
+                    "way the closed-loop bench does in flight (render_auto); fixed: the looks' own exposure (before 10-30)")
     return ap.parse_args(argv)
 
 
@@ -592,6 +595,7 @@ def world_background():
     return None
 
 
+BACKDROP_RING = 90.0     # the backdrop skirt and trees reach this far from the centre, m
 FOG_GEOM = {"half_xy": 60.0, "z0": -10.0, "z1": 40.0}
 
 
@@ -715,6 +719,56 @@ def render_to(path, res=(W, H)):
     s.render.resolution_percentage = 100
     s.render.filepath = str(path)
     bpy.ops.render.render(write_still=True)
+
+
+# auto exposure of the closed-loop bench (bench render/blender_server.py = MPPI's render_looks meter / ae_ev)
+REC709 = np.array([0.2126, 0.7152, 0.0722], np.float32)
+AE_TARGET, AE_BIAS_EV, EV_RANGE = 0.18, 0.25, (-6.0, 10.0)
+CW = {"sx": 0.25, "sy": 0.30, "cy": 0.10}
+
+
+def meter_center(rgb):
+    """Centre-weighted (Gaussian, sd 0.25 W x 0.30 H, centred 0.10 H below the middle) 0.75 log-average + 0.25 mean of
+    the linear frame's Rec.709 luminance."""
+    h, w = rgb.shape[:2]
+    lum = (rgb[..., :3].reshape(-1, 3).astype(np.float32) @ REC709).reshape(h, w).astype(np.float64)
+    y = (np.arange(h) + 0.5) / h - 0.5 - CW["cy"]
+    x = (np.arange(w) + 0.5) / w - 0.5
+    g = np.exp(-0.5 * (y[:, None] / CW["sy"]) ** 2 - 0.5 * (x[None, :] / CW["sx"]) ** 2)
+    g /= g.sum()
+    return 0.75 * float(np.exp((np.log(np.maximum(lum, 1e-4)) * g).sum())) + 0.25 * float((lum * g).sum())
+
+
+def render_auto(path, res=(W, H)):
+    """Render once, meter the linear Render Result, save the PNG from the same result at
+    EV = log2(0.18 / meter) + 0.25 (clamped to [-6, 10]). A path tracer's noise scales with the signal, so a dim look
+    comes out as clean as a bright one. Returns (ev, meter)."""
+    import OpenEXR
+    s = bpy.context.scene
+    s.render.resolution_x, s.render.resolution_y = res
+    s.render.resolution_percentage = 100
+    bpy.ops.render.render()
+    rr = bpy.data.images["Render Result"]
+    im = s.render.image_settings
+    tmp = Path(str(path)[:-4] + "_lin.exr")
+    im.file_format, im.color_depth = "OPEN_EXR_MULTILAYER", "32"
+    rr.save_render(str(tmp), scene=s)
+    chans = OpenEXR.File(str(tmp)).channels()
+    tmp.unlink()
+    rgba = [k for k in chans if k.endswith("Combined") or k.endswith("Combined.RGBA") or k.endswith("Combined.RGB")]
+    if rgba:
+        rgb = np.asarray(chans[rgba[0]].pixels, np.float32)[..., :3]
+    else:
+        rgb = np.stack([np.asarray(chans[next(k for k in chans if k.endswith("Combined." + c))].pixels, np.float32)
+                        for c in "RGB"], -1)
+    m = meter_center(rgb)
+    ev = float(np.clip(math.log2(AE_TARGET / max(m, 1e-6)) + AE_BIAS_EV, *EV_RANGE))
+    im.file_format, im.color_depth = "PNG", "8"
+    ev0 = s.view_settings.exposure
+    s.view_settings.exposure = ev
+    rr.save_render(str(path), scene=s)
+    s.view_settings.exposure = ev0
+    return ev, m
 
 
 def render_depth(path_npy):
@@ -859,7 +913,7 @@ def copy_edge_attributes(src, me, V, e, band=2.0):
     return n
 
 
-def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=90.0, step=1.5):
+def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=BACKDROP_RING, step=1.5):
     """Scenery outside the populated square (none of it is in the collision cloud or the flight box):
     a terrain skirt that continues the fine terrain's edge heights outward, and instanced copies of the scene's own
     trees at the scene's density between the populated square and ring_out."""
@@ -1008,7 +1062,9 @@ def main():
         floor_z = grid_lookup(GZf, region)
         print(f"cave floor: {100 * (1 - nan.mean()):.0f} % of the region's columns, z {np.nanmin(GZ):.1f} to "
               f"{np.nanmax(GZ):.1f}", flush=True)
-    FOG_GEOM.update(half_xy=region + 40.0, z0=float(np.nanmin(GZ)) - 5.0, z1=float(np.nanmax(GZ)) + 35.0)
+    # the haze box covers the backdrop: a skirt ring outside it is lit through no fog and glows on the horizon
+    FOG_GEOM.update(half_xy=max(region, BACKDROP_RING) + 20.0, z0=float(np.nanmin(GZ)) - 5.0,
+                    z1=float(np.nanmax(GZ)) + 35.0)
     def ground_grid(x, y):
         i = int(round((x + region) / 0.5))
         j = int(round((y + region) / 0.5))
@@ -1159,9 +1215,14 @@ def main():
             if base is not None:
                 apply_look(look, base, v["yaw"])
             t1 = time.time()
-            render_to(a.out / f"v{k}_{look}.png")
-            timings.append({"view": k, "look": look, "s": round(time.time() - t1, 1)})
-            print("rendered", k, look, timings[-1]["s"], "s", flush=True)
+            tr = {"view": k, "look": look}
+            if a.exposure == "auto":
+                ev, m = render_auto(a.out / f"v{k}_{look}.png")
+                tr.update(ev=round(ev, 2), meter=round(m, 5))
+            else:
+                render_to(a.out / f"v{k}_{look}.png")
+            timings.append({**tr, "s": round(time.time() - t1, 1)})
+            print("rendered", k, look, timings[-1], flush=True)
         if base is not None:
             apply_look("A0", base, v["yaw"])
         render_depth(a.out / f"v{k}_depth.npy")
@@ -1187,7 +1248,7 @@ def main():
 
     rec = {"views": views, "timings": timings, "camera": {"w": W, "h": H, "hfov_deg": HFOV},
            "samples": a.samples, "threads": a.threads, "wires": [o.name for o in wire_objs], "backdrop": backdrop,
-           "terrain_smooth_deg": a.smooth_angle, "seconds": round(time.time() - t0, 1)}
+           "terrain_smooth_deg": a.smooth_angle, "exposure": a.exposure, "seconds": round(time.time() - t0, 1)}
     (a.out / "views.json").write_text(json.dumps(rec, indent=1))
     if a.wires:
         bpy.ops.wm.save_as_mainfile(filepath=str(a.out / "scene_wires.blend"), copy=True)
