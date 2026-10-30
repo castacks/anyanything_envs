@@ -96,11 +96,14 @@ gs2 has; use 8 m or more.
    above every type that finished) the near terrain stays as meshed; at 0.15 m it is already finer than
    Infinigen's own subdivided one (its coarse mesh is 0.8 m). `box.json` records `near_terrain`. mountain 105
    then generates in 24.5 min at a 10.8 GB peak (the chopped-tree booleans; the crop step itself 4.2 GB).
+   snowy_mountain 108 is steep but a heightfield (423k faces): it keeps the subdivision, 8.1 min at a 23.9 GB
+   peak, all of it this step; pass a lower limit to trade that for an unsubdivided near terrain.
 9. **Camera rules a crop cannot meet.** Infinigen still poses its camera before anything is populated, and
-   snowy_mountain asks for every visible terrain point to be at least 40 m away: on a 58 m square no proposal
-   passes (0 of 3000 on mountain's square, same test), and Infinigen gives up after 30000 tries. The pose search
-   is then retried with Infinigen's defaults (2 m, 50-100 % terrain in view); every stage reseeds, and the camera
-   no longer decides anything here.
+   snowy_mountain asks for every visible terrain point to be at least 40 m away. Inside the square that almost
+   never happens (0 of 3000 proposals on mountain's square; snowy_mountain 108 found 8 of the 100 candidates
+   Infinigen wants in 7.5 min, slowing to 87 s each). `nature_box.py` binds
+   `keep_cam_pose_proposal.min_terrain_distance=2`, base.gin's value and so a no-op for every other type; the
+   camera no longer decides what is populated, and every stage reseeds.
 
 ## Scene types
 
