@@ -1,8 +1,10 @@
 """Blender 5.2 (the screen's flyer version) render check: open a scene, put the Starling front camera at a pose,
-render twice (first = sync + render, second = steady state with persistent data), CPU Cycles.
+render --renders times per sample count (the first render of the session includes the scene sync; the rest are
+steady state with persistent data), on the CPU or a GPU.
 
     blender -b --factory-startup --python bl52_frame.py -- --scene X.blend --out frame.png \
-        [--pose x y z yaw | --views views.json --view 0] [--samples 32] [--threads 30] [--hide-prefix liquid]
+        [--pose x y z yaw | --views views.json --view 0] [--samples 64 32] [--renders 2] [--device CPU|CUDA|OPTIX] \
+        [--threads 30] [--hide-prefix liquid]
 """
 import argparse
 import json
@@ -20,7 +22,9 @@ ap.add_argument("--out", required=True)
 ap.add_argument("--pose", nargs=4, type=float, default=None)
 ap.add_argument("--views", default=None)
 ap.add_argument("--view", type=int, default=0)
-ap.add_argument("--samples", type=int, default=32)
+ap.add_argument("--samples", type=int, nargs="+", default=[32])
+ap.add_argument("--renders", type=int, default=2, help="renders per sample count")
+ap.add_argument("--device", default="CPU", choices=["CPU", "CUDA", "OPTIX"])
 ap.add_argument("--threads", type=int, default=30)
 ap.add_argument("--hide-prefix", nargs="*", default=[])
 a = ap.parse_args(argv)
@@ -56,8 +60,20 @@ cam.location = (x, y, z)
 cam.rotation_euler = (math.pi / 2, 0.0, yaw - math.pi / 2)
 s.camera = cam
 s.render.engine = "CYCLES"
-s.cycles.device = "CPU"
-s.cycles.samples = a.samples
+devices = []
+if a.device == "CPU":
+    s.cycles.device = "CPU"
+else:
+    prefs = bpy.context.preferences.addons["cycles"].preferences
+    prefs.compute_device_type = a.device
+    prefs.refresh_devices()
+    for d in prefs.devices:
+        d.use = d.type == a.device
+        if d.use:
+            devices.append(d.name)
+    if not devices:
+        raise SystemExit(f"no {a.device} device")
+    s.cycles.device = "GPU"
 s.cycles.use_adaptive_sampling = True
 s.cycles.adaptive_threshold = 0.02
 s.cycles.use_denoising = True
@@ -65,13 +81,17 @@ s.render.threads_mode, s.render.threads = "FIXED", a.threads
 s.render.use_persistent_data = True
 s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = W, H, 100
 s.render.image_settings.file_format = "PNG"
-times = []
-for k in range(2):
-    s.render.filepath = a.out if k == 0 else a.out.replace(".png", "_2.png")
-    t = time.time()
-    bpy.ops.render.render(write_still=True)
-    times.append(round(time.time() - t, 1))
+times = {}
+for spp in a.samples:
+    s.cycles.samples = spp
+    times[spp] = []
+    for k in range(a.renders):
+        s.render.filepath = a.out.replace(".png", f"_{spp}spp_{k}.png") if (len(a.samples) > 1 or k) else a.out
+        t = time.time()
+        bpy.ops.render.render(write_still=k == 0)
+        times[spp].append(round(time.time() - t, 2))
 sky = [n.sky_type for w in [s.world] if w and w.node_tree for n in w.node_tree.nodes if n.type == "TEX_SKY"]
 print("BL52_FRAME", json.dumps({"scene": a.scene, "blender": bpy.app.version_string, "load_s": round(load_s, 1),
-                                "render_s": times, "pose": [x, y, z, yaw], "samples": a.samples,
+                                "render_s": times if len(a.samples) > 1 else times[a.samples[0]], "pose": [x, y, z, yaw],
+                                "samples": a.samples, "device": a.device, "devices": devices,
                                 "threads": a.threads, "sky": sky}), flush=True)
