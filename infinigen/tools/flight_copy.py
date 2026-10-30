@@ -19,8 +19,9 @@ What the copy holds (--no-cut keeps 1 only, the like-for-like reference):
    mask follow the original at the cell scale (0.23 m for plain 201's grass); 3.2 M instances become 49k.
 3. The backdrop: the same trees as box_views places (same prototypes, same seed), each a copy of a scene tree with its
    twigs thinned like 4 (15 % kept; 8 % beyond 50 m) instead of the full tree (~12k instances each).
-4. Trees and bushes standing more than 3 m outside the flight box keep half their twigs, more than 8 m a third (--thin),
-   the kept ones scaled up by p^-1/2 so the canopy keeps its cover. Trees in and near the box are untouched.
+4. Optional (--thin, off by default): trees and bushes standing more than d m outside the flight box keep a fraction p of
+   their twigs, the kept ones scaled up by p^-1/2. 3:0.5,8:0.33 saves 0.08-0.11 M instances in plain 201 and forest 222,
+   but those canopies come out visibly fuller from inside the box.
 
 Looks (box_views' A1-A3) are applied at render time and are not baked; the copy renders A0.
 """
@@ -60,8 +61,8 @@ def parse():
     ap.add_argument("--backdrop-thin", type=float, nargs=2, default=[0.15, 0.08], metavar=("P_NEAR", "P_FAR"),
                     help="backdrop trees keep this fraction of their twigs (near; beyond --backdrop-far m)")
     ap.add_argument("--backdrop-far", type=float, default=50.0)
-    ap.add_argument("--thin", default="3:0.5,8:0.33", help="trees this far outside the box (m) keep this fraction "
-                    "of their twigs: d:p,d:p ('' = none)")
+    ap.add_argument("--thin", default="", help="trees this far outside the box (m) keep this fraction of their twigs, "
+                    "d:p,d:p, e.g. 3:0.5,8:0.33 (off by default: the scaled-up twigs make those canopies visibly fuller)")
     ap.add_argument("--smooth-angle", type=float, default=35.0)
     ap.add_argument("--seed", type=int, default=0)
     return ap.parse_args(argv)
