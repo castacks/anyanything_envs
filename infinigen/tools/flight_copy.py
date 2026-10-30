@@ -159,25 +159,35 @@ def hidden_collection(name):
     return c
 
 
-def evaluated_mesh(ob, name):
-    """ob's evaluated geometry as a new mesh (ob linked to the scene for the evaluation, then removed)."""
-    bpy.context.scene.collection.objects.link(ob)
+def evaluated_meshes(obs, names):
+    """The evaluated geometry of temporary objects as new meshes: all linked to the scene for one depsgraph
+    evaluation (each evaluation of a large Infinigen scene costs seconds), then removed."""
+    for ob in obs:
+        bpy.context.scene.collection.objects.link(ob)
     deps = bpy.context.evaluated_depsgraph_get()
-    me = bpy.data.meshes.new_from_object(ob.evaluated_get(deps), preserve_all_data_layers=True, depsgraph=deps)
-    me.name = name
-    bpy.data.objects.remove(ob)
-    return me
+    out = []
+    for ob, name in zip(obs, names):
+        me = bpy.data.meshes.new_from_object(ob.evaluated_get(deps), preserve_all_data_layers=True, depsgraph=deps)
+        me.name = name
+        out.append(me)
+    for ob in obs:
+        bpy.data.objects.remove(ob)
+    return out
 
 
-def decimated_mesh(me, target, name):
-    """A copy of mesh me with about target faces (collapse decimation); me itself when it is already that small."""
-    n = len(me.polygons)
-    if n <= target:
-        return me
-    ob = bpy.data.objects.new("fc_tmp", me)
-    m = ob.modifiers.new("dec", "DECIMATE")
-    m.ratio = max(target / n, 1e-5)
-    return evaluated_mesh(ob, name)
+def decimated_meshes(meshes, target, names):
+    """Copies of the meshes with about target faces each (collapse decimation); a mesh already that small is
+    returned as it is."""
+    todo = [k for k, me in enumerate(meshes) if len(me.polygons) > target]
+    obs = []
+    for k in todo:
+        ob = bpy.data.objects.new("fc_tmp", meshes[k])
+        ob.modifiers.new("dec", "DECIMATE").ratio = max(target / len(meshes[k].polygons), 1e-5)
+        obs.append(ob)
+    out = list(meshes)
+    for k, me in zip(todo, evaluated_meshes(obs, [names[k] for k in todo])):
+        out[k] = me
+    return out
 
 
 def euler_xyz(R):
@@ -264,6 +274,9 @@ def instances_by_parent(min_count, prefix="scatter:"):
 def patch_scatter(scatter, M, protos, pid, a, zgn, rng, half):
     """Replace scatter (an Infinigen geo_instance_scatter object) by patch instances; see the module docstring."""
     tag = scatter.name.split(":")[-1].split("(")[0][:24]
+    # zero-scale instances (a tapered density mask scales some to nothing) are invisible: drop them
+    ok = np.linalg.norm(M[:, :3, :3], axis=1).min(1) > 1e-6
+    M, pid = M[ok], pid[ok]
     P, A = M[:, :3, 3], M[:, :3, :3]
     # cell size from the typical point density (the scatter's density is uniform where its mask allows)
     _, c0 = np.unique(np.floor(P[:, :2] / 0.25).astype(np.int64), axis=0, return_counts=True)
@@ -286,28 +299,34 @@ def patch_scatter(scatter, M, protos, pid, a, zgn, rng, half):
             Z[c] = g[0]
             N[c] = g[1]
     O = np.concatenate([C, Z[:, None]], 1)
+    print(f"{tag}: {len(P)} points, {nc} cells of {cell:.2f} m, terrain sampled", flush=True)
     # prototype patches: cells at evenly spaced point-count quantiles
     order = np.argsort(cnt, kind="stable")
     src = np.unique(order[np.linspace(0, nc - 1, a.patches).round().astype(int)])
     dcoll = hidden_collection(f"fc_{tag}_assets")
-    for q, o in enumerate(protos):
-        dob = bpy.data.objects.new(f"fc_{tag}_d{q:03d}", decimated_mesh(o.data, a.asset_polys, f"fc_{tag}_d{q:03d}"))
-        dcoll.objects.link(dob)
+    dnames = [f"fc_{tag}_d{q:03d}" for q in range(len(protos))]
+    for nm, me in zip(dnames, decimated_meshes([o.data for o in protos], a.asset_polys, dnames)):
+        dcoll.objects.link(bpy.data.objects.new(nm, me))
     grp = instance_group(f"fc_{tag}_realize", dcoll, realize=True)
+    print(f"{tag}: {len(protos)} assets decimated", flush=True)
     pcoll = hidden_collection(f"fc_{tag}_patches")
     members = np.argsort(inv, kind="stable")
     starts = np.concatenate([[0], np.cumsum(cnt)])
     Rs = frames(N[src])
-    pcount = []
+    tmps, pcount = [], []
     for q, (c, R) in enumerate(zip(src, Rs)):
         idx = members[starts[c]:starts[c + 1]]
         rel = (P[idx] - O[c]) @ R                       # R^T (p - o), row vectors
         Arel = np.einsum("ji,njk->nik", R, A[idx])      # R^T A
         s = np.linalg.norm(Arel, axis=1)                # column norms = scale
-        tmp = points_object("fc_tmp_pts", rel, pid[idx], euler_xyz(Arel / s[:, None, :]), s)
+        tmp = points_object(f"fc_tmp_pts{q:03d}", rel, pid[idx], euler_xyz(Arel / s[:, None, :]), s)
         tmp.modifiers.new("inst", "NODES").node_group = grp
-        pme = evaluated_mesh(tmp, f"fc_{tag}_p{q:03d}")
-        if q == 0:
+        tmps.append(tmp)
+        pcount.append(len(idx))
+    pnames = [f"fc_{tag}_p{q:03d}" for q in range(len(tmps))]
+    mats = None
+    for nm, pme in zip(pnames, evaluated_meshes(tmps, pnames)):
+        if mats is None:
             per_instance_random(pme)
             mats = list(pme.materials)
         else:
@@ -316,9 +335,7 @@ def patch_scatter(scatter, M, protos, pid, a, zgn, rng, half):
                     pme.materials[i] = mats[i]
             if len(pme.materials) != len(mats):
                 per_instance_random(pme)
-        pob = bpy.data.objects.new(f"fc_{tag}_p{q:03d}", pme)
-        pcoll.objects.link(pob)
-        pcount.append(len(idx))
+        pcoll.objects.link(bpy.data.objects.new(nm, pme))
     pcount = np.array(pcount)
     # one patch per occupied cell: nearest point count, ties broken at random; a random quarter turn
     porder = np.argsort(pcount, kind="stable")
@@ -335,7 +352,7 @@ def patch_scatter(scatter, M, protos, pid, a, zgn, rng, half):
         c.objects.link(ob)
     bpy.data.objects.remove(scatter)
     inbox = (np.abs(C[:, 0]) < half) & (np.abs(C[:, 1]) < half)
-    return {"scatter": tag, "instances": int(len(P)), "cell_m": round(cell, 3),
+    return {"scatter": tag, "instances": int(len(P)), "zero_scale_dropped": int((~ok).sum()), "cell_m": round(cell, 3),
             "density_per_m2": round(rho, 1), "patch_instances": int(nc), "in_box": int(inbox.sum()),
             "prototypes": int(len(src)), "faces_per_patch": int(np.mean([len(o.data.polygons)
                                                                          for o in pcoll.objects]))}
@@ -458,6 +475,7 @@ def main():
     if not a.no_cut:
         t1 = time.time()
         counts, dense = instances_by_parent(a.patch_min)
+        print("dense scatters", {k: len(v[2]) for k, v in dense.items()}, f"{time.time() - t1:.0f} s", flush=True)
         rec["instances_before"] = {k: v for k, v in sorted(counts.items(), key=lambda kv: -kv[1])[:12]}
         rec["patched"] = []
         for name, (M, protos, pid) in dense.items():
