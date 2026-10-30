@@ -72,6 +72,45 @@ from above and let it in from the sides beneath them, where the fog scatters it 
 (the frame was 6x darker and the band saturated). Infinigen's world also holds an unconnected Background node;
 `world_background()` follows the link to the World Output, so the looks' sky strength now takes effect.
 
+## Flight copies (many frames of one scene)
+
+```bash
+python infinigen/tools/flight_copy.py --scene out/plain_7/scene/scene.blend --box out/plain_7/box.json \
+    --band out/plain_7/views/band.json --out out/plain_7/flight/scene_flight.blend [--keep-water]
+python infinigen/tools/probe_cost.py --scene out/plain_7/flight/scene_flight.blend --box out/plain_7/box.json
+```
+
+A renderer that flies many frames through one scene (the closed-loop bench, `tools/gpu_timing.sh`) pays Blender's
+scene sync on every frame: Cycles walks every depsgraph instance on each render, persistent data or not, at
+10-14 us an instance on gs2's CPU. Infinigen squares carry millions (`tools/probe_cost.py` counts them by
+instancer). plain 201 as saved: 3.46 M, of which 3.21 M grass tufts and 0.23 M twigs, fruit and branches on its trees;
+box_views' backdrop adds 1.61 M (132 trees, each a full copy of one of the scene's trees, ~12k instances). forest 222:
+0.49 M (0.40 M on trees) plus 5.90 M in its backdrop (863 trees). One flight frame of plain 201 as saved spends
+46-52 s in that sync on gs2 (1 sample, 64 x 48): 44-46 s for the grass, ~2 s for the trees, 0.1 s for the rest
+(measured by hiding each).
+
+`flight_copy.py` writes a copy that renders like box_views' frames with far fewer instances:
+
+1. **What box_views adds at render time**: the backdrop, the water (hidden, or re-shaded with `--keep-water`), the
+   smooth terrain shading; Infinigen's drivers, Scene Time nodes and object animation baked at the current frame
+   (`tools/freeze.py`, shared with `bl52_frame.py`). `--no-cut` stops here: the like-for-like reference.
+2. **Dense scatters as patches** (any scatter with at least `--patch-min` instances: grass, ground leaves): the
+   points are binned into cells of about `--patch` (64) points (0.23 m for plain 201's grass), 48 prototype meshes
+   are realized from real cells (decimated copies of the scatter's assets, positioned in the cell's terrain frame),
+   and every occupied cell gets one patch instance, picked by point count and turned by a multiple of 90 degrees
+   about the local terrain normal. The density field and its mask follow the original at the cell scale; each tuft
+   keeps its own random value (a stored attribute that copies of its materials read instead of Object Info >
+   Random), so the colour still varies per tuft. plain 201: 3.21 M tufts become 49k patches.
+3. **Thinner canopies outside the box** (`--thin`): trees and bushes standing more than 3 m outside the flight box
+   keep half their twigs, more than 8 m a third; the kept ones are scaled up by p^-1/2 so the canopy keeps its
+   cover. Trees in the box and within 3 m of it, and the collision cloud, are untouched.
+4. **A cheaper backdrop**: copies of 6 of the scene's trees with their twigs thinned the same way (15 % kept; 8 %
+   beyond 50 m from the centre, where half the backdrop trees are dropped), instead of full copies of all of them.
+   Realized low-detail trees do not work: a leafy twig asset is ~1e5 separate leaf pieces (up to 5.7 M faces), which
+   collapse decimation cannot take below one triangle each, and realizing ~10k of them per tree crashed Blender.
+
+Looks (A1-A3) are applied at render time by box_views' `apply_look`; the copy renders A0.
+
 ## What it costs (gs2: 32 cores, 62 GB, no GPU)
 
 | Step | Time |

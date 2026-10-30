@@ -929,10 +929,21 @@ def copy_edge_attributes(src, me, V, e, band=2.0):
     return n
 
 
-def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=BACKDROP_RING, step=1.5):
+def tree_roots():
+    """The populated trees' asset roots (each hangs off its placeholder, outside its unique_assets collection)."""
+    roots = []
+    for c in bpy.data.collections:
+        if c.name.startswith("unique_assets:TreeFactory"):
+            members = set(c.objects)
+            roots += [o for o in c.objects if o.parent not in members]
+    return roots
+
+
+def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=BACKDROP_RING, step=1.5, protos=None):
     """Scenery outside the populated square (none of it is in the collision cloud or the flight box):
     a terrain skirt that continues the fine terrain's edge heights outward, and instanced copies of the scene's own
-    trees at the scene's density between the populated square and ring_out."""
+    trees at the scene's density between the populated square and ring_out. protos: collections to instance instead
+    of the scene's tree hierarchies (flight_copy.py passes realized low-detail ones)."""
     t0 = time.time()
     e = tbound - 0.6
     # edge height profile along the square (every 1 m), for the skirt's height extension
@@ -987,21 +998,17 @@ def add_backdrop(zg, tbound, region, rng, tree_density, ring_out=BACKDROP_RING, 
         return z_edge(x, y)
 
     # tree prototypes: every populated tree hierarchy as a collection to instance
-    roots = []
-    for c in bpy.data.collections:
-        if c.name.startswith("unique_assets:TreeFactory"):
-            members = set(c.objects)
-            roots += [o for o in c.objects if o.parent not in members]  # asset roots hang off their placeholders
-    protos = []
-    for k, r in enumerate(roots[:40]):
-        pc = bpy.data.collections.new(f"backdrop_proto_{k}")
-        stack = [r]
-        while stack:
-            o = stack.pop()
-            pc.objects.link(o)
-            stack += list(o.children)
-        pc.instance_offset = r.matrix_world.translation.copy()
-        protos.append(pc)
+    if protos is None:
+        protos = []
+        for k, r in enumerate(tree_roots()[:40]):
+            pc = bpy.data.collections.new(f"backdrop_proto_{k}")
+            stack = [r]
+            while stack:
+                o = stack.pop()
+                pc.objects.link(o)
+                stack += list(o.children)
+            pc.instance_offset = r.matrix_world.translation.copy()
+            protos.append(pc)
     n_inst = 0
     if protos:
         holder = bpy.data.collections.new("backdrop_trees")

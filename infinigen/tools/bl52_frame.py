@@ -4,7 +4,7 @@ steady state with persistent data), on the CPU or a GPU.
 
     blender -b --factory-startup --python bl52_frame.py -- --scene X.blend --out frame.png \
         [--pose x y z yaw | --views views.json --view 0] [--samples 64 32] [--renders 2] [--device CPU|CUDA|OPTIX] \
-        [--threads 30] [--hide-prefix liquid] [--bench] [--denoiser OPTIX] [--step 0.05]
+        [--threads 30] [--hide-prefix liquid] [--bench] [--denoiser OPTIX] [--step 0.05] [--res 640 480]
 
 --bench renders the way the closed-loop bench's blender_server does (bench-students setup_cycles_mppi +
 freeze_scene): adaptive threshold 0.015, bounces 8/3/3/6/0, indirect clamp 8, no caustics, animated objects
@@ -19,9 +19,13 @@ import json
 import math
 import sys
 import time
+from pathlib import Path
 
 import bpy
 from mathutils import Vector
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from freeze import freeze_objects, freeze_time  # noqa: E402
 
 argv = sys.argv[sys.argv.index("--") + 1:]
 ap = argparse.ArgumentParser()
@@ -39,6 +43,7 @@ ap.add_argument("--bench", action="store_true", help="the closed-loop bench's Cy
 ap.add_argument("--denoiser", default=None, choices=["OPTIX", "OPENIMAGEDENOISE", "NONE"],
                 help="default: Blender's own (OIDN)")
 ap.add_argument("--step", type=float, default=0.0, help="metres forward per render after the first")
+ap.add_argument("--res", type=int, nargs=2, default=[640, 480], help="W H (a small frame isolates the per-frame sync)")
 a = ap.parse_args(argv)
 
 t0 = time.time()
@@ -62,7 +67,7 @@ else:
     hit, loc, *_ = s.ray_cast(deps, Vector((0.0, 0.0, 200.0)), Vector((0, 0, -1)))
     x, y, z, yaw = 0.0, 0.0, (loc.z if hit else 0.0) + 2.0, 0.0
 
-W, H, HFOV = 640, 480, 87.0
+W, H, HFOV = a.res[0], a.res[1], 87.0
 cam = bpy.data.objects.new("check_cam", bpy.data.cameras.new("check_cam"))
 s.collection.objects.link(cam)
 cam.data.sensor_fit, cam.data.sensor_width = "HORIZONTAL", 36.0
@@ -91,45 +96,6 @@ s.cycles.adaptive_threshold = 0.02
 s.cycles.use_denoising = a.denoiser != "NONE"
 if a.denoiser not in (None, "NONE"):
     s.cycles.denoiser = a.denoiser
-def freeze_time(scene):
-    """Infinigen scenes depend on time beyond object animation: a driver on the cloud shader (frame * k) and Scene
-    Time nodes in the grass and fern scatters (wind). Blender re-evaluates them on every render, which recompiles
-    every shader and rebuilds the cloud volume and the scene BVH each frame. Bake their values at the current frame.
-    """
-    deps = bpy.context.evaluated_depsgraph_get()
-    pairs = [(ng, ng.evaluated_get(deps)) for ng in bpy.data.node_groups]
-    for idb in list(bpy.data.materials) + list(bpy.data.worlds) + list(bpy.data.lights):
-        ev = idb.evaluated_get(deps)
-        pairs.append((idb, ev))
-        if idb.node_tree is not None:
-            pairs.append((idb.node_tree, ev.node_tree))
-    n_drivers = n_time = 0
-    for orig, ev in pairs:
-        if orig.animation_data is None:
-            continue
-        for d in list(orig.animation_data.drivers):
-            owner, attr = d.data_path.rsplit(".", 1)
-            val = getattr(ev.path_resolve(owner), attr)
-            orig.driver_remove(d.data_path, d.array_index)
-            if hasattr(val, "__len__"):
-                getattr(orig.path_resolve(owner), attr)[d.array_index] = val[d.array_index]
-            else:
-                setattr(orig.path_resolve(owner), attr, val)
-            n_drivers += 1
-    fps = scene.render.fps / scene.render.fps_base
-    for ng in bpy.data.node_groups:
-        for n in [n for n in ng.nodes if n.bl_idname == "GeometryNodeInputSceneTime"]:
-            for out in n.outputs:
-                if out.links:
-                    v = ng.nodes.new("ShaderNodeValue")
-                    v.outputs[0].default_value = scene.frame_current / fps if out.name == "Seconds" else scene.frame_current
-                    for link in list(out.links):
-                        ng.links.new(v.outputs[0], link.to_socket)
-            ng.nodes.remove(n)
-            n_time += 1
-    return n_drivers, n_time
-
-
 frozen = None
 if a.bench:
     s.cycles.adaptive_threshold = 0.015
@@ -140,13 +106,7 @@ if a.bench:
     s.cycles.filter_width = 1.5
     s.render.use_motion_blur = False
     frozen = dict(zip(("drivers", "scene_time"), freeze_time(s)))
-    frozen["objects"] = 0
-    for o in bpy.data.objects:
-        if o.animation_data is not None and o != cam:
-            mw = o.matrix_world.copy()
-            o.animation_data_clear()
-            o.matrix_world = mw
-            frozen["objects"] += 1
+    frozen["objects"] = freeze_objects(keep=(cam,))
     vl = bpy.context.view_layer
     for p in dir(vl):
         if p.startswith("use_pass_") and p != "use_pass_combined" and isinstance(getattr(vl, p, None), bool) \
@@ -177,4 +137,4 @@ print("BL52_FRAME", json.dumps({"scene": a.scene, "blender": bpy.app.version_str
                                 "samples": a.samples, "device": a.device, "devices": devices,
                                 "threads": a.threads, "sky": sky, "bench": a.bench,
                                 "denoiser": s.cycles.denoiser if s.cycles.use_denoising else "NONE",
-                                "step": a.step, "frozen": frozen}), flush=True)
+                                "step": a.step, "res": [W, H], "frozen": frozen}), flush=True)

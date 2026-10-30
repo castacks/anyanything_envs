@@ -4,7 +4,8 @@
 # Each scene is staged from gs2 into /dev/shm (airstation03's root disk is nearly full), rendered, and removed; the
 # Blender process's peak GPU memory is sampled once a second. Renders use the closed-loop bench's settings (--bench,
 # OptiX denoiser): the first run (job 60b35d2c, 10-30) left Blender's default OIDN on, which runs on the CPU and
-# took most of each frame. The camera steps 5 cm forward per render, as in a flight.
+# took most of each frame. The camera steps 5 cm forward per render, as in a flight. Cycles' debug log gives each
+# render's split into scene sync (CPU) and the rest (path tracing, denoising): <name> sync_s / render_s in summary.txt.
 #
 #   sched5090 add --repo anyanything_envs --vram 20 --cls oneoff --min-disk 2 --timeout 1h --note "..." -- \
 #       bash infinigen/tools/gpu_timing.sh NAME=GS2_BLEND[,GS2_VIEWS_JSON] ...
@@ -30,7 +31,8 @@ for spec in "$@"; do
   vw=()
   [ -n "$views" ] && scp -q "$SRC:$views" $STAGE/$name.views.json && vw=(--views $STAGE/$name.views.json --view 0)
   echo "$name staged $(du -h $STAGE/$name.blend | cut -f1) in $(( $(date +%s) - t0 )) s" | tee -a $OUT/summary.txt
-  $B -b --factory-startup --python infinigen/tools/bl52_frame.py -- --scene $STAGE/$name.blend --out $OUT/$name.png \
+  $B -b --factory-startup --log "cycles" --log-level debug --log-file $OUT/$name.cycles.log \
+      --python infinigen/tools/bl52_frame.py -- --scene $STAGE/$name.blend --out $OUT/$name.png \
       "${vw[@]}" --samples 64 32 --renders 6 --device OPTIX --bench --denoiser OPTIX --step 0.05 > $OUT/$name.log 2>&1 &
   pid=$!; peak=0
   while kill -0 $pid 2>/dev/null; do
@@ -45,6 +47,12 @@ for spec in "$@"; do
     echo "$name render failed: $(grep -i -m1 'error' $OUT/$name.log)" | tee -a $OUT/summary.txt
   fi
   echo "$name vram_peak_mib $peak" | tee -a $OUT/summary.txt
+  # Cycles' own split of every render: scene sync (Blender -> Cycles, on the CPU) and the rest (path tracing, denoise)
+  echo "$name sync_s $(grep -o 'synchronizing data: [0-9.]*' $OUT/$name.cycles.log | awk '{printf "%.2f ", $3}')" \
+      | tee -a $OUT/summary.txt
+  echo "$name render_s $(grep -o 'without synchronization): [0-9.]*' $OUT/$name.cycles.log | awk '{printf "%.2f ", $3}')" \
+      | tee -a $OUT/summary.txt
+  gzip -f $OUT/$name.cycles.log
   rm -f $STAGE/$name.blend
 done
 echo GPU_TIMING_DONE | tee -a $OUT/summary.txt
