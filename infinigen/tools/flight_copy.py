@@ -12,13 +12,13 @@ backdrop alone is 5.9 M. A flight frame of plain 201 spent 50 s in that sync on 
 What the copy holds (--no-cut keeps 1 only, the like-for-like reference):
 1. The backdrop, water and terrain shading as box_views.py renders them (water hidden unless --keep-water, which
    re-shades it); drivers, Scene Time nodes and object animation baked at the current frame (tools/freeze.py).
-2. Dense scatters (>= --patch-min instances: grass) tiled as patches: the scatter's points binned into cells of ~--patch
-   points, --patches prototype meshes realized from real cells (decimated copies of the scatter's assets, positions
-   relative to the cell's terrain frame), one patch instance per occupied cell, picked by point count and turned by a
-   multiple of 90 degrees about the local terrain normal. The density field and its mask follow the original at the
-   cell scale (~0.16 m for plain 201's grass); 3.2 M instances become ~0.1 M.
-3. The backdrop's trees: copies of --backdrop-protos of the scene's trees whose twigs are thinned like 4 (15 % kept, 8 %
-   beyond 50 m, where half the backdrop trees are dropped), instead of the scene's full trees (~12k instances each).
+2. Dense scatters (>= --patch-min instances: grass, ground leaves) tiled as patches: the scatter's points binned into
+   cells of ~--patch points, --patches prototype meshes realized from real cells (the scatter's assets, decimated only
+   above --asset-polys; positions relative to the cell's terrain frame), one patch instance per occupied cell, picked
+   by point count and turned by a multiple of 90 degrees about the local terrain normal. The density field and its
+   mask follow the original at the cell scale (0.23 m for plain 201's grass); 3.2 M instances become 49k.
+3. The backdrop: the same trees as box_views places (same prototypes, same seed), each a copy of a scene tree with its
+   twigs thinned like 4 (15 % kept; 8 % beyond 50 m) instead of the full tree (~12k instances each).
 4. Trees and bushes standing more than 3 m outside the flight box keep half their twigs, more than 8 m a third (--thin),
    the kept ones scaled up by p^-1/2 so the canopy keeps its cover. Trees in and near the box are untouched.
 
@@ -54,12 +54,11 @@ def parse():
     ap.add_argument("--no-cut", action="store_true", help="backdrop/water/shading/freeze only (reference copy)")
     ap.add_argument("--patch", type=int, default=64, help="points per patch cell")
     ap.add_argument("--patch-min", type=int, default=20000, help="scatters with at least this many instances")
-    ap.add_argument("--patches", type=int, default=48, help="prototype patches per scatter")
-    ap.add_argument("--asset-polys", type=int, default=300, help="decimate a scatter asset to this many faces")
-    ap.add_argument("--backdrop-protos", type=int, default=6)
-    ap.add_argument("--backdrop-thin", type=float, nargs=3, default=[0.15, 0.08, 0.5], metavar=("P_NEAR", "P_FAR", "KEEP"),
-                    help="backdrop trees keep this fraction of their twigs (near, beyond --backdrop-far), and this "
-                    "fraction of the trees beyond --backdrop-far")
+    ap.add_argument("--patches", type=int, default=24, help="prototype patches per scatter")
+    ap.add_argument("--asset-polys", type=int, default=10000, help="decimate larger scatter assets to this many faces "
+                    "(grass tufts, 4-7k faces, stay whole: decimating them to ~550 lost the pale blade tips)")
+    ap.add_argument("--backdrop-thin", type=float, nargs=2, default=[0.15, 0.08], metavar=("P_NEAR", "P_FAR"),
+                    help="backdrop trees keep this fraction of their twigs (near; beyond --backdrop-far m)")
     ap.add_argument("--backdrop-far", type=float, default=50.0)
     ap.add_argument("--thin", default="3:0.5,8:0.33", help="trees this far outside the box (m) keep this fraction "
                     "of their twigs: d:p,d:p ('' = none)")
@@ -490,27 +489,21 @@ def main():
         protos = None
         if not a.no_cut:
             t1 = time.time()
-            roots = FV.tree_roots()
-            pick = [roots[i] for i in np.unique(np.linspace(0, len(roots) - 1, min(a.backdrop_protos, len(roots)))
-                                                .round().astype(int))]
-            protos = thinned_copies(pick, a.backdrop_thin[0], "near")
-            far = thinned_copies(pick, a.backdrop_thin[1], "far")
-            rec["backdrop_protos"] = [r.name for r in pick]
+            # thinned copies of the same prototypes box_views uses, so the same seed places the same trees
+            roots = FV.tree_roots()[:40]
+            protos = thinned_copies(roots, a.backdrop_thin[0], "near")
+            far = thinned_copies(roots, a.backdrop_thin[1], "far")
+        # a fresh generator: the backdrop is the reference copy's tree for tree
         rec["backdrop"] = FV.add_backdrop(lambda x, y: (lambda g: None if g is None else g[0])(zgn(x, y)),
-                                          box.get("terrain_bound", region + 4.0), region, rng, td, protos=protos)
+                                          box.get("terrain_bound", region + 4.0), region,
+                                          np.random.default_rng(a.seed), td, protos=protos)
         if not a.no_cut:
-            # beyond --backdrop-far m: keep a fraction of the trees, each thinner still
-            n_far = n_drop = 0
+            n_far = 0
             for e in [o for o in bpy.data.objects if o.name.startswith("backdrop_tree_")]:
-                if max(abs(e.location.x), abs(e.location.y)) < a.backdrop_far:
-                    continue
-                if rng.random() > a.backdrop_thin[2]:
-                    bpy.data.objects.remove(e)
-                    n_drop += 1
-                else:
+                if max(abs(e.location.x), abs(e.location.y)) >= a.backdrop_far:
                     e.instance_collection = far[protos.index(e.instance_collection)]
                     n_far += 1
-            rec["backdrop"].update(far_m=a.backdrop_far, far_kept=n_far, far_dropped=n_drop)
+            rec["backdrop"].update(far_m=a.backdrop_far, far_trees=n_far)
             rec["backdrop_s"] = round(time.time() - t1, 1)
     if not a.no_cut and a.thin:
         rec["thinned_trees"] = thin_outer_trees(half, [tuple(map(float, t.split(":"))) for t in a.thin.split(",")])

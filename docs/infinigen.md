@@ -95,8 +95,9 @@ box_views' backdrop adds 1.61 M (132 trees, each a full copy of one of the scene
    smooth terrain shading; Infinigen's drivers, Scene Time nodes and object animation baked at the current frame
    (`tools/freeze.py`, shared with `bl52_frame.py`). `--no-cut` stops here: the like-for-like reference.
 2. **Dense scatters as patches** (any scatter with at least `--patch-min` instances: grass, ground leaves): the
-   points are binned into cells of about `--patch` (64) points (0.23 m for plain 201's grass), 48 prototype meshes
-   are realized from real cells (decimated copies of the scatter's assets, positioned in the cell's terrain frame),
+   points are binned into cells of about `--patch` (64) points (0.23 m for plain 201's grass), 24 prototype meshes
+   are realized from real cells (the scatter's own assets, positioned in the cell's terrain frame; decimating the
+   tufts to ~550 faces lost the pale blade tips),
    and every occupied cell gets one patch instance, picked by point count and turned by a multiple of 90 degrees
    about the local terrain normal. The density field and its mask follow the original at the cell scale; each tuft
    keeps its own random value (a stored attribute that copies of its materials read instead of Object Info >
@@ -104,10 +105,10 @@ box_views' backdrop adds 1.61 M (132 trees, each a full copy of one of the scene
 3. **Thinner canopies outside the box** (`--thin`): trees and bushes standing more than 3 m outside the flight box
    keep half their twigs, more than 8 m a third; the kept ones are scaled up by p^-1/2 so the canopy keeps its
    cover. Trees in the box and within 3 m of it, and the collision cloud, are untouched.
-4. **A cheaper backdrop**: copies of 6 of the scene's trees with their twigs thinned the same way (15 % kept; 8 %
-   beyond 50 m from the centre, where half the backdrop trees are dropped), instead of full copies of all of them.
-   Realized low-detail trees do not work: a leafy twig asset is ~1e5 separate leaf pieces (up to 5.7 M faces), which
-   collapse decimation cannot take below one triangle each, and realizing ~10k of them per tree crashed Blender.
+4. **A cheaper backdrop**: the same trees box_views places (same prototypes and seed), each a copy of a scene tree with
+   its twigs thinned the same way (15 % kept; 8 % beyond 50 m from the centre) instead of the full tree. Realized
+   low-detail trees do not work: a leafy twig asset is ~1e5 separate leaf pieces (up to 5.7 M faces), which collapse
+   decimation cannot take below one triangle each, and realizing ~10k of them per tree crashed Blender.
 
 Looks (A1-A3) are applied at render time by box_views' `apply_look`; the copy renders A0.
 
