@@ -108,8 +108,8 @@ gs2 has; use 8 m or more.
 ## Scene types
 
 Tested: forest. Running in the first smoke batch: plain, river, canyon, cliff, mountain, desert, arctic,
-snowy_mountain, coast. **cave**: one smoke scene, see "Caves" below. Not yet: **Infinigen-Indoors** (a different
-generator, `generate_indoors`). Underwater types (kelp_forest, coral_reef, under_water) are not useful for drones.
+snowy_mountain, coast. **cave**: one smoke scene, see "Caves" below. **Infinigen-Indoors** is a different
+generator, see "Indoors" below. Underwater types (kelp_forest, coral_reef, under_water) are not useful for drones.
 
 **Overhangs (mountain).** mountain draws Infinigen's floating "upside-down mountains" in 40 % of seeds. Seed 105
 has one over 70 % of the box, its underside 13-20 m up (5-18 m over the ground). `box_views.py` finds the ground
@@ -206,3 +206,93 @@ through an opening in one view; up close the terrain's flat-shaded facets show.
 
 An earlier run of the same command with cave asset 0 pre-built (kept with `-p execute_tasks.reset_assets=False`)
 took 16.9 min and gave a byte-identical cloud.npz and band.json and the same views.
+
+## Indoors
+
+Infinigen-Indoors (`generate_indoors`) lays out a house with a floor-plan solver, furnishes every room with a
+constraint solver and has no terrain to mesh. `infinigen/indoor_box.py` runs it on one storey with
+`base_indoors.gin` + `fast_solve.gin` (fewer solver steps and Infinigen's reduced room program: living room,
+kitchen, dining room, bedroom(s), bathroom) and writes `<out>/box.json` (every room's floor outline, area, floor
+and ceiling height, object counts per factory and per room) and `<out>/scene/scene.blend`.
+`infinigen/indoor_views.py` makes the flight-box views; it imports `box_views.py` for the sampling, the voxel
+accumulator, the camera and the render helpers.
+
+```bash
+python infinigen/indoor_box.py --seed 1 --out out/house_1
+python infinigen/indoor_views.py --scene out/house_1/scene/scene.blend --box out/house_1/box.json \
+    --out out/house_1/views --n-views 3 --samples 32 --threads 30
+```
+
+**Camera culling: none for the house.** The indoor pipeline has no "in view of the camera" test: the solver
+places the objects of every room, and `populate_state_placeholders` spawns each one with no camera, at the fixed
+detail distance (`scatter_res_distance`, 4 m). `target_face_size` would read the scene camera's lens, but no
+scene camera exists before populate (the driver logs it: `scene camera = None`), so every asset gets its 3 mm
+floor. The only scatter indoors (fruit in bowls) is called without `dist_max`/`fov`, so it culls nothing.
+What does depend on the camera is optional, and the driver forces it off with gin overrides (nothing is patched):
+
+| Infinigen-Indoors | Flight box |
+|---|---|
+| outdoor terrain around the house, grass and rocks only where the camera looks (`create_outdoor_backdrop`: `split_inview`, `near_distance`) | terrain off, no outdoors (`compose_indoors.terrain_enabled=False`); windows look onto the sky |
+| room meshes re-meshed by OcMesher around the cameras (`real_geometry*.gin`) | off: Infinigen's own room meshes |
+| `overhead.gin`: rooms other than the solved ones hidden, ceilings invisible, an overhead camera | off: every room and ceiling renders |
+| floating objects placed in the camera's view | off |
+| a search for camera poses inside the rooms (`pose_cameras`) | skipped: nothing uses it, `indoor_views.py` places its own cameras |
+| a 20 % chance that every light is deleted | 0, so the views are lit |
+| half the doors nearly shut (0-9 deg), 20 % open, the rest anywhere | `--doors open` (default): every door 84-174 deg open, Infinigen's own `populate_doors.all_open`; `--doors infinigen` keeps the mix |
+
+`box.json` lists the objects in each room and any placeholder left unpopulated (`unpopulated_placeholders`, empty).
+
+**Views.** The flight band runs from 0.4 m over the floor to 0.4 m under the ceiling. The cloud holds every
+render-visible mesh and instance (walls, doors, windows with their glass, furniture, lamps, floor, ceiling and the
+house's outer shell) as 10 cm voxels, each labelled with its factory or room part (`wall`, `floor`, `ceiling`,
+`exterior`); unlike the nature boxes, small meshes are sampled as surfaces too (a cup is not one point), at
+2000 samples/m2 so walls have no holes. Occupancy is counted over the house footprint, the room floors closed across
+the walls between them: an inner wall is a blocked cell, a doorway a free one. `band.json` reports the slices
+0.4-1, 1-2 (the views' slice) and 2 m to the band top, plus the whole band, with connectivity: how many rooms the
+largest free region reaches, over all free cells and over those at least 0.5 m clear. Views stand in the most open
+spot of the roomiest rooms, 1.2-1.6 m over the floor, facing the longest free sightline; the renders keep
+Infinigen's indoor exposure (`film_exposure` 3, saved in the scene). The top view hides the ceiling, the roof and the
+ceiling lights from camera rays only, as Infinigen's overhead mode does, so the rooms keep their light.
+
+| Step (gs2, CPU) | Time |
+|---|---|
+| generate a 5-room house (133 m2, 50 objects) with the smoke settings below | 16 min, peak 1.9 GB RAM |
+| cloud (106 k voxels), occupancy and plan | 8 s |
+| one 640 x 480 drone frame, 32 spp, 30 threads | 22-35 s (top view 21 s) |
+
+The smoke house (`/mnt/data/infinigen/agents/indoors/house_1` on gs2) was made with
+
+```bash
+python infinigen/indoor_box.py --seed 1 --out out/house_1 -p compose_indoors.solve_steps_large=30 \
+    compose_indoors.solve_steps_medium=15 SimulatedAnnealingSolver.max_invalid_candidates=2 \
+    compose_indoors.solve_small_enabled=False
+```
+
+because `fast_solve.gin`'s own steps (100 large, 40 medium, 5 small per room and stage) take hours on a shared gs2:
+an annealing step cost 2-3 s in the first room with the box loaded, grows with the objects already placed (10 s in
+the living room), and a proposal that cannot fit is retried at full price. In seed 1's kitchen every attempt to add
+a kitchen island built a new island and searched up to `max_invalid_candidates` (5) poses for it: 45-125 s per
+attempt, every one failing, about an hour for that stage alone. `solve_small_enabled=False` leaves out the small
+objects on surfaces (cups, books, plates), nothing a drone flies into. The price is a sparser house: with 30 steps
+and 2 candidates no bed was placed in the smoke house (8 proposals failed; the 50-step try placed one) and the
+kitchen has an oven and shelves but no counters. For a full house run `fast_solve.gin`'s defaults on a quiet box.
+
+Traps:
+
+1. **Doorways are tight.** A door is 0.7-0.8 x (1.4 m - wall thickness) wide, about 0.85 m, and its leaf and frame
+   take some of that: on 25 cm cells a doorway is two or three free cells, so rooms that connect over all free cells
+   need not connect at 0.5 m clearance. In the smoke house the free cells at 1-2 m form one region over 4 of the 5
+   rooms; the cells at least 0.5 m clear reach 3.
+2. **Room floors stop at the walls.** The floor outlines in `box.json` are the rooms' own floors; the walls between
+   rooms, and the doorways in them, belong to no room (hence the closed footprint above).
+3. **Window glass** is in the cloud (a drone cannot pass it) but almost fully transparent to camera rays, so the
+   depth image sees through windows to the sky.
+4. **An "open" door can still fill its doorway.** With `--doors open` the smoke house's bathroom door
+   (`LiteDoorFactory`) was turned 98 deg and still lies across its 0.7 m opening, on the bathroom side of the wall
+   (door voxels from the floor to 2.9 m in the doorway cells), so the bathroom is sealed; the bedroom and entrance
+   doors (`PanelDoorFactory`, turned 165 and 127 deg) stand in their rooms. Why this door ends up there is not
+   established (a probe of the door meshes was inconclusive). Check `components_free` /
+   `rooms_in_largest_component_free` in `band.json` before flying room to room.
+5. **The floor is not at z = 0.** Each room is its outline extruded to the wall height and shelled inwards by half a
+   wall thickness, so the floor is at `floor_z` (0.15 m here) and the ceiling at wall height minus that; use
+   `box.json`, which reads both from the meshes.

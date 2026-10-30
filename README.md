@@ -8,7 +8,7 @@ in the same format, so a planner, a labeller or a policy can fly any of them.
 |---|---|---|
 | [`envgen.primitives`](envgen/primitives) | Primitive obstacle patches: 22 single-obstacle families (walls, slots, windows, floating boxes and bars, rooms, rings, tree stands, clutter, wires...), corridors of several obstacles (tier B) and arenas mixing many (tier C). | plain Python (numpy, scipy) |
 | [`blender/`](blender) | Blender courses: a patch rebuilt as meshes with the same geometry and dressed as a real place, either one of 4 themes or one of 13 place kits (2 indoor). Asset libraries from Poly Haven and ambientCG (CC0) plus a curated Objaverse slice. | Blender 5.2 |
-| [`infinigen/`](infinigen) | Infinigen nature scenes (forest, plain, river, canyon, cliff, mountain, desert, arctic, snowy mountain, coast; caves, flown inside) generated as a fully populated square flight box, with collision cloud, flight-height plan and drone-eye renders in four lighting looks; optional Wenshan-style floating obstacles from Infinigen's procedural asset factories. | Infinigen 1.x (bpy 4.2) |
+| [`infinigen/`](infinigen) | Infinigen nature scenes (forest, plain, river, canyon, cliff, mountain, desert, arctic, snowy mountain, coast; caves, flown inside) generated as a fully populated square flight box, with collision cloud, flight-height plan and drone-eye renders in four lighting looks; optional Wenshan-style floating obstacles from Infinigen's procedural asset factories. Infinigen-Indoors houses (a few furnished rooms, one storey) as indoor flight boxes. | Infinigen 1.x (bpy 4.2) |
 
 Wenshan's static Blender scenes are not part of this repo (they are hers).
 
@@ -39,6 +39,11 @@ python infinigen/nature_box.py --seed 1 --out out/forest_1 --scene-type forest -
     --configs fast_terrain_assets.gin
 python infinigen/box_views.py --scene out/forest_1/scene/scene.blend --box out/forest_1/box.json \
     --out out/forest_1/views --n-views 3 --samples 32
+
+# 5. an Infinigen-Indoors house (a few furnished rooms) as an indoor flight box
+python infinigen/indoor_box.py --seed 1 --out out/house_1
+python infinigen/indoor_views.py --scene out/house_1/scene/scene.blend --box out/house_1/box.json \
+    --out out/house_1/views --n-views 3 --samples 32
 ```
 
 ## Place kits
@@ -88,7 +93,8 @@ Every course directory holds `spec.json` (the patch), `cloud.npz` (`points` floa
 obstacle samples one per 10 cm voxel, region 0 and up; floor grid at 25 cm, region -1), `course.blend`
 (packed with `--pack`) and `course.json` (what was placed, materials, HDRI, provenance). Infinigen boxes write
 `box.json`, `scene/scene.blend` and, from `box_views.py`, `views/cloud.npz` with per-height-slice occupancy
-in `band.json`. Details: [docs/formats.md](docs/formats.md).
+in `band.json`; indoor houses (`indoor_box.py`, `indoor_views.py`) write the same files, with the rooms in `box.json`
+and occupancy over the floor. Details: [docs/formats.md](docs/formats.md).
 
 ## Tests
 
