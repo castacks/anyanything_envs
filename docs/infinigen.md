@@ -108,9 +108,8 @@ gs2 has; use 8 m or more.
 ## Scene types
 
 Tested: forest. Running in the first smoke batch: plain, river, canyon, cliff, mountain, desert, arctic,
-snowy_mountain, coast. Not yet: **cave** (the ground is found by casting down from above, which hits the
-roof; needs a floor search from inside) and **Infinigen-Indoors** (a different generator, `generate_indoors`).
-Underwater types (kelp_forest, coral_reef, under_water) are not useful for drones.
+snowy_mountain, coast. **cave**: one smoke scene, see "Caves" below. Not yet: **Infinigen-Indoors** (a different
+generator, `generate_indoors`). Underwater types (kelp_forest, coral_reef, under_water) are not useful for drones.
 
 **Overhangs (mountain).** mountain draws Infinigen's floating "upside-down mountains" in 40 % of seeds. Seed 105
 has one over 70 % of the box, its underside 13-20 m up (5-18 m over the ground). `box_views.py` finds the ground
@@ -118,3 +117,92 @@ by casting down from above and leaves the terrain out of the cloud, so under it 
 top (median 24 m, one of the two smoke views stands on it) and the band map describes that top, as in a cave.
 Until `box_views.py` searches for the floor, keep them out of flight boxes with
 `-p scene.upsidedown_mountains_chance=0`.
+
+## Caves
+
+```bash
+python infinigen/nature_box.py --seed 7 --out out/cave_7 --scene-type cave --half 15 --margin 10 \
+    --design-dist 8 --no-monocots --tree-density 0 --configs fast_terrain_assets.gin
+python infinigen/box_views.py --scene out/cave_7/scene/scene.blend --box out/cave_7/box.json \
+    --out out/cave_7/views --n-views 2 --looks A0 --samples 32 --threads 30
+```
+
+The drone flies inside the cave. Both scripts switch on `scene_type == "cave"` (box.json carries it); nothing
+changes for the other types.
+
+**Where Infinigen puts the cave.** `cave.gin` sets `scene.caves_chance = 1`. `Caves` is not a terrain element of
+its own but an operation on every one of them (ground, land tiles, rocks): a smooth subtraction of the cave's SDF
+(`terrain/source/common/elements/caves.h`). The kernel puts one cave in every cell of a Voronoi lattice with
+`frequency = 0.01` (100 m cells) and `randomness = 0` (cell centres on the integer lattice), so the cell at the
+origin always holds one, and always cave asset 0: an L-system tunnel network (`terrain/assets/caves`: at least 5000
+symbols traced as 0.5-unit extrusions turning in 15 degree steps, skinned at radius ~2, remeshed, its SDF stored on a
+128^3 grid). The asset's vertex centroid sits at (0, 0, `Caves.height_offset` = -4 m). It is turned about z by a
+random angle (`is_horizontal = 1`: no tilt), scaled so its padded bounding box has a 100 m diagonal, and its walls are
+pushed in and out by 9-octave Perlin noise of amplitude `noise_scale` (uniform 2-5 m). That noise is as large as the
+tunnel radius or larger, so the result is less a tunnel than a cluster of irregular chambers with pillars, dead ends
+and some two-level stretches. Infinigen's camera search then samples `cave.gin`'s populated bounds (|x|, |y| <= 25 m,
+-25 <= z <= 0), drops each sample to 1.5-2.5 m above the surface below it, and keeps poses in free space that see
+terrain in every pixel (`terrain_coverage_range = (1, 1)`), at least 30 % of it cave-tagged, at most 30 % of it
+closer than 4 m.
+
+**nature_box.py for a cave:**
+
+| | |
+|---|---|
+| box | stays centred on the origin, where the cave is |
+| caves | `scene.caves_chance=1` after the configs (`fast_terrain_assets.gin` sets it to 0); `caves.load_assets.on_the_fly_instances=1` (only asset 0 reaches the box; one asset takes 7-9 min to build, on one core) |
+| terrain z bounds | measured, not fixed (`cave_bounds`): once the terrain elements exist, before meshing, their SDF is sampled on a 1 m x 1 m x 0.5 m grid over the populated square; free cells with rock somewhere above them are cave; the largest connected piece reaching into the flight box sets the z bounds, 2 m below its lowest and above its highest cell. Infinigen's camera search samples inside these bounds too |
+| populate | only within two grid cells of that piece (its floor, walls and roof), not the ground above the cave |
+| closed sides | the UniformMesher leaves terrain open where it meets the bounds, so a tunnel crossing the side of the square would end in a hole onto the sky. Everything beyond the sides and the bottom counts as rock: tunnels end in a wall 4 m outside the populated square. The top stays open, so a real entrance keeps its sky |
+| too little cave | stops after the terrain stage when the flight box holds less than `--cave-min-void` (300 m^3) of it |
+| water | off by default (`cave.gin` would flood everything below z = -5 with 80 % chance); `--water type` keeps it |
+| trees | not touched, but `--tree-density 0` is recommended: `cave.gin` keeps trees (chance 0.4) on upward-facing land, and a cave floor is that |
+
+**box_views.py for a cave:**
+
+- **Floor from inside the void** (`CaveFloor`). Casting down from z = 200 meets the roof (or the ground above the
+  cave) first. Instead, every terrain surface on the vertical line is collected and paired into void intervals: a
+  roof (face normal pointing down; Infinigen's terrain normals point out of the rock) and the next surface below it
+  with its normal up, the floor. Only roofed intervals whose floor face carries Infinigen's cave tag (`MaskTag`
+  values listed as `cave.*` in `MaskTag.json`: the faces the cave carved) count, so voids under other overhangs do
+  not. The ground is the floor of the tallest of them (heights capped at the band top, 5.5 m; ties go to the lowest);
+  intervals under 1 m are pockets in the walls. A column without one (solid rock, the open ground above the cave, an
+  entrance or sinkhole open to the sky) has no floor: `ground_grid` is NaN there.
+- **Cave rock in the cloud.** The terrain is not in the cloud of an open scene (the ground is `ground_grid`). In a
+  cave the walls and the roof are the obstacles, so terrain samples more than 0.3 m above the floor of their column
+  join the cloud with label `cave_rock`; heights over the ground (`agl`) in columns without a floor use the nearest
+  floor.
+- **Band slices over that floor**; columns without a floor are blocked at every height. `band.json` gets a `cave`
+  block: share of the box's columns with a floor, floor heights, headroom (roof minus floor) percentiles, share with
+  more than one cave level, share whose topmost surface faces the sky. Its `canopy_*` numbers count the roof.
+- **Views** are drawn as in the open scenes (free in the 1-3 m slice, 1.6-2.4 m over the floor, facing the
+  longest free sightline). No backdrop. The looks A1-A3 only change the sky; inside a closed cave use A0.
+- **top.png is a cut-away**: a copy of the terrain without the faces more than 2 m above the floor (roof, upper
+  walls, the ground above), objects wholly above that height hidden, lit by the sky from above. Solid rock shows as
+  the black lower half of the sky. `make_sheet.py`'s plan draws columns without a floor as obstacles.
+
+**Light.** `cave.gin` turns glowing rocks on (`compose_nature.glowing_rocks_chance = 1`): `GlowingRocksFactory`
+placeholders on cave-tagged faces of any orientation (`normal_thresh = -1.1`), 0.025 per m^2; each is a
+translucent rock in a random gem colour with a 400-800 W point light inside, transparent to non-camera rays so its
+light gets out. They are practically all the light. In the smoke scene's view 0 the mean sRGB luminance is 111/255
+with everything on, 111 with the glowing rocks alone, and 19 (31 % of the pixels below 10) with the sky alone, which
+only comes in through openings. `cave.gin` also sets the film exposure to 1.3 (`configure_render_cycles.exposure`;
+it is saved in scene.blend, so box_views renders with it). The frames are bright and colourful rather than dark:
+walls in the terrain's two materials (a salmon-red rock and a pale lilac-white stone) lit in pools of the rocks'
+pink and violet light, the rocks themselves as small bright spots, ferns and dark boulders on the floor, daylight
+through an opening in one view; up close the terrain's flat-shaded facets show.
+
+**Smoke scene (seed 7)**, the commands above:
+
+| | |
+|---|---|
+| generation | 24.1 min: terrain 10.5 (building cave asset 0 alone 7.1, on one core; the land tile 2.0), Infinigen's camera search 5.0, in-view split 3.6, ground cover (pebbles, twigs, ferns, mushrooms) 3.6, populate 0.2, fine terrain 0.6; peak RSS 22.6 GB, reached in the in-view split (which subdivides the near terrain twice; Infinigen's per-stage RSS stays under 3.7 GB); scene.blend 1.9 GB |
+| terrain | ground + MultiMountains land tile + voronoi rocks; `cave_bounds`: z bounds -10 to 4 m, 1901 m^3 of roofed cave in the flight box, cave cells between z = -8 and 2 m |
+| assets in the box | 60 glowing rocks (67 in the populated square), 4 boulders, ferns, mushrooms, pebbles; no trees (`--tree-density 0`) or bushes (not drawn) |
+| floor | 49 % of the box's columns (21 % of the populated square's), z -8.5 to 0.0 m; headroom p10 / median / p90 1.7 / 3.6 / 6.4 m; 7 % with two cave levels; in 88 % of the columns the topmost meshed surface faces the sky (the ground above the cave lies inside the z bounds; the roof is 0.6-3 m thick at the sampled points) |
+| slices | 1-3 m: 72 % of the box blocked (the 51 % without a floor included), 9.5 % at least 1 m clear, median clearance 0.7 m; 0.4-5.5 m: 92 % blocked (the roof) |
+| cloud | 344,943 voxels, 316,110 of them `cave_rock` |
+| views | v0 at (-2.4, -2.1, -4.6) m, 1.8 m over the floor, free sightline 12 m; v1 at (-3.1, 4.9, -4.5), 2.3 m over the floor, 18 m; 34 and 36 s per frame at 32 spp, cut-away 24 s, 2.4 min in all; median depth 3.8 and 7.2 m, v1 sees 3.8 % sky |
+
+An earlier run of the same command with cave asset 0 pre-built (kept with `-p execute_tasks.reset_assets=False`)
+took 16.9 min and gave a byte-identical cloud.npz and band.json and the same views.
