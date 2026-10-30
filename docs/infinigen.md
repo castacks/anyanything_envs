@@ -112,6 +112,14 @@ gs2 has; use 8 m or more.
     the cave, mountain and indoor changes merged) gives a byte-identical `cloud.npz` to the run from before them.
     `box_views.py` applies the same at render time (`--smooth-angle`, 0 renders the terrain as saved), so scenes
     generated before this render the same way.
+11. **Every frame re-syncs the whole scene.** Infinigen's cloud shader carries a driver (`frame * k`, drifting
+    clouds) and the grass and fern scatters read Scene Time (wind). Blender re-evaluates both on every render,
+    persistent data or not, even when only the camera moves: every shader is recompiled and the cloud volume and the
+    scene BVH are rebuilt for each frame, 10 s of a 14 s frame at 1 spp (plain 101, gs2 CPU, 8 threads). Baking
+    them at the current frame (`freeze_time` in `tools/bl52_frame.py`, on with `--bench`) leaves 3.9 s: 1.9 s of
+    path tracing and 1.9 s of Blender's sync of the 227k instances, which persistent data cannot skip. Frame-1
+    renders look the same either way. A multi-frame renderer (flights) needs the same freeze: the closed-loop
+    bench's `freeze_scene` clears object animation only, and these scenes have none.
 
 ## Scene types
 

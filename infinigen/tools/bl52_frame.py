@@ -4,7 +4,15 @@ steady state with persistent data), on the CPU or a GPU.
 
     blender -b --factory-startup --python bl52_frame.py -- --scene X.blend --out frame.png \
         [--pose x y z yaw | --views views.json --view 0] [--samples 64 32] [--renders 2] [--device CPU|CUDA|OPTIX] \
-        [--threads 30] [--hide-prefix liquid]
+        [--threads 30] [--hide-prefix liquid] [--bench] [--denoiser OPTIX] [--step 0.05]
+
+--bench renders the way the closed-loop bench's blender_server does (bench-students setup_cycles_mppi +
+freeze_scene): adaptive threshold 0.015, bounces 8/3/3/6/0, indirect clamp 8, no caustics, animated objects
+frozen, every pass but Combined off, no compositor; and, for Infinigen, the drivers and Scene Time nodes baked at
+the current frame (freeze_time). The denoiser matters most on a GPU: Blender's default OIDN
+runs on the CPU (~2.5 s a frame on airstation03), the OptiX denoiser ~0.3 s. --step moves the camera forward by
+that many metres before every render after the first, so the steady-state renders see a camera-only update, as
+in a flight.
 """
 import argparse
 import json
@@ -27,6 +35,10 @@ ap.add_argument("--renders", type=int, default=2, help="renders per sample count
 ap.add_argument("--device", default="CPU", choices=["CPU", "CUDA", "OPTIX"])
 ap.add_argument("--threads", type=int, default=30)
 ap.add_argument("--hide-prefix", nargs="*", default=[])
+ap.add_argument("--bench", action="store_true", help="the closed-loop bench's Cycles settings")
+ap.add_argument("--denoiser", default=None, choices=["OPTIX", "OPENIMAGEDENOISE", "NONE"],
+                help="default: Blender's own (OIDN)")
+ap.add_argument("--step", type=float, default=0.0, help="metres forward per render after the first")
 a = ap.parse_args(argv)
 
 t0 = time.time()
@@ -76,16 +88,85 @@ else:
     s.cycles.device = "GPU"
 s.cycles.use_adaptive_sampling = True
 s.cycles.adaptive_threshold = 0.02
-s.cycles.use_denoising = True
+s.cycles.use_denoising = a.denoiser != "NONE"
+if a.denoiser not in (None, "NONE"):
+    s.cycles.denoiser = a.denoiser
+def freeze_time(scene):
+    """Infinigen scenes depend on time beyond object animation: a driver on the cloud shader (frame * k) and Scene
+    Time nodes in the grass and fern scatters (wind). Blender re-evaluates them on every render, which recompiles
+    every shader and rebuilds the cloud volume and the scene BVH each frame. Bake their values at the current frame.
+    """
+    deps = bpy.context.evaluated_depsgraph_get()
+    pairs = [(ng, ng.evaluated_get(deps)) for ng in bpy.data.node_groups]
+    for idb in list(bpy.data.materials) + list(bpy.data.worlds) + list(bpy.data.lights):
+        ev = idb.evaluated_get(deps)
+        pairs.append((idb, ev))
+        if idb.node_tree is not None:
+            pairs.append((idb.node_tree, ev.node_tree))
+    n_drivers = n_time = 0
+    for orig, ev in pairs:
+        if orig.animation_data is None:
+            continue
+        for d in list(orig.animation_data.drivers):
+            owner, attr = d.data_path.rsplit(".", 1)
+            val = getattr(ev.path_resolve(owner), attr)
+            orig.driver_remove(d.data_path, d.array_index)
+            if hasattr(val, "__len__"):
+                getattr(orig.path_resolve(owner), attr)[d.array_index] = val[d.array_index]
+            else:
+                setattr(orig.path_resolve(owner), attr, val)
+            n_drivers += 1
+    fps = scene.render.fps / scene.render.fps_base
+    for ng in bpy.data.node_groups:
+        for n in [n for n in ng.nodes if n.bl_idname == "GeometryNodeInputSceneTime"]:
+            for out in n.outputs:
+                if out.links:
+                    v = ng.nodes.new("ShaderNodeValue")
+                    v.outputs[0].default_value = scene.frame_current / fps if out.name == "Seconds" else scene.frame_current
+                    for link in list(out.links):
+                        ng.links.new(v.outputs[0], link.to_socket)
+            ng.nodes.remove(n)
+            n_time += 1
+    return n_drivers, n_time
+
+
+frozen = None
+if a.bench:
+    s.cycles.adaptive_threshold = 0.015
+    s.cycles.sample_clamp_indirect = 8.0
+    s.cycles.max_bounces, s.cycles.diffuse_bounces, s.cycles.glossy_bounces = 8, 3, 3
+    s.cycles.transmission_bounces, s.cycles.volume_bounces = 6, 0
+    s.cycles.caustics_reflective = s.cycles.caustics_refractive = False
+    s.cycles.filter_width = 1.5
+    s.render.use_motion_blur = False
+    frozen = dict(zip(("drivers", "scene_time"), freeze_time(s)))
+    frozen["objects"] = 0
+    for o in bpy.data.objects:
+        if o.animation_data is not None and o != cam:
+            mw = o.matrix_world.copy()
+            o.animation_data_clear()
+            o.matrix_world = mw
+            frozen["objects"] += 1
+    vl = bpy.context.view_layer
+    for p in dir(vl):
+        if p.startswith("use_pass_") and p != "use_pass_combined" and isinstance(getattr(vl, p, None), bool) \
+                and getattr(vl, p):
+            try:
+                setattr(vl, p, False)
+            except (AttributeError, TypeError):
+                pass
+    s.render.use_compositing = False
 s.render.threads_mode, s.render.threads = "FIXED", a.threads
 s.render.use_persistent_data = True
 s.render.resolution_x, s.render.resolution_y, s.render.resolution_percentage = W, H, 100
 s.render.image_settings.file_format = "PNG"
+fwd = Vector((math.cos(yaw), math.sin(yaw), 0.0)) * a.step
 times = {}
 for spp in a.samples:
     s.cycles.samples = spp
     times[spp] = []
     for k in range(a.renders):
+        cam.location = Vector((x, y, z)) + fwd * k
         s.render.filepath = a.out.replace(".png", f"_{spp}spp_{k}.png") if (len(a.samples) > 1 or k) else a.out
         t = time.time()
         bpy.ops.render.render(write_still=k == 0)
@@ -94,4 +175,6 @@ sky = [n.sky_type for w in [s.world] if w and w.node_tree for n in w.node_tree.n
 print("BL52_FRAME", json.dumps({"scene": a.scene, "blender": bpy.app.version_string, "load_s": round(load_s, 1),
                                 "render_s": times if len(a.samples) > 1 else times[a.samples[0]], "pose": [x, y, z, yaw],
                                 "samples": a.samples, "device": a.device, "devices": devices,
-                                "threads": a.threads, "sky": sky}), flush=True)
+                                "threads": a.threads, "sky": sky, "bench": a.bench,
+                                "denoiser": s.cycles.denoiser if s.cycles.use_denoising else "NONE",
+                                "step": a.step, "frozen": frozen}), flush=True)
