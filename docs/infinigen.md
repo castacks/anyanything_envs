@@ -94,11 +94,10 @@ box_views' backdrop adds 1.61 M (132 trees, each a full copy of one of the scene
 1. **What box_views adds at render time**: the backdrop, the water (hidden, or re-shaded with `--keep-water`), the
    smooth terrain shading; Infinigen's drivers, Scene Time nodes and object animation baked at the current frame
    (`tools/freeze.py`, shared with `bl52_frame.py`). `--no-cut` stops here: the like-for-like reference.
-2. **Dense scatters as patches** (any scatter with at least `--patch-min` instances: grass, ground leaves): the
+2. **Dense scatters as patches** (any scatter with at least `--patch-min` (100k) instances: plain 201's grass): the
    points are binned into cells of about `--patch` (64) points (0.23 m for plain 201's grass), 24 prototype meshes
    are realized from real cells (the scatter's own assets, positioned in the cell's terrain frame; decimating the
-   tufts to ~550 faces lost the pale blade tips),
-   and every occupied cell gets one patch instance, picked by point count and turned by a multiple of 90 degrees
+   tufts to ~550 faces lost the pale blade tips), and every occupied cell gets one patch instance, picked by point count and turned by a multiple of 90 degrees
    about the local terrain normal. The density field and its mask follow the original at the cell scale; each tuft
    keeps its own random value (a stored attribute that copies of its materials read instead of Object Info >
    Random), so the colour still varies per tuft. plain 201: 3.21 M tufts become 49k patches.
@@ -111,6 +110,39 @@ box_views' backdrop adds 1.61 M (132 trees, each a full copy of one of the scene
    decimation cannot take below one triangle each, and realizing ~10k of them per tree crashed Blender.
 
 Looks (A1-A3) are applied at render time by box_views' `apply_look`; the copy renders A0.
+
+**Measured (10-30, gs2 CPU, Blender 5.2, bench settings, steady-state frames at 1 sample and 64 x 48, so the frame is
+nearly all sync; depsgraph instances by `probe_cost.py`):**
+
+| Scene | As saved | Uncut flight copy (`--no-cut`) | Cut flight copy | Instances, uncut -> cut |
+|---|---|---|---|---|
+| plain 201 | 46-52 s | 59-66 s | 3.6 s | 5.07 M -> 0.43 M |
+| forest 222 | not measured | 59-60 s | 8.5-9.2 s | 6.39 M -> 1.01 M |
+
+What is left in the cut copies is the scene's own trees, untouched (plain 201: 0.23 M instances, forest 222: 0.40 M),
+the thinned backdrop (0.13 M / 0.52 M) and, in forest 222, its sparse scatters (0.09 M). Writing a cut copy takes
+1-3 min at up to 10 GB (plain 201: 164 s, peak RSS 9.8 GB; forest 222: 57 s). The copy is self-contained (no external
+files, libraries or images), and Blender 5.2 opens it in 16-32 s on gs2. At 32 samples, 640 x 480, a CPU view takes
+30-78 s cut against 86-151 s uncut.
+
+Visual check against the uncut copy, 32-sample renders of the two views and two outward poses at the box edge:
+- **forest 222**: PSNR 29-44 dB, mean colour within 0.5 units. Only backdrop trees seen through gaps in the canopy
+  differ (its scatters are below `--patch-min`, so only the backdrop changes).
+- **plain 201**: mean colour within a few units, PSNR 18-20 dB (21-23 dB on 8 x 8 blocks). Two differences are visible:
+  (a) grass on rock outcrops and at the edges of the grass mask, because a patch lies on one plane per 0.23 m cell
+  and so covers some of the pale ground between tufts; (b) the backdrop's thinned trees look fuller from 25-60 m,
+  because their twigs are scaled up.
+
+Dead ends: thinning the canopies of trees just outside the box (`--thin`) made them visibly fuller, so it is off.
+Patching forest 222's sparse scatters (44k grass and 32k ground leaves at 32 / m2, which gave 1 m cells) left the
+near grass visibly sparser.
+
+**Opening a copy in another renderer** (the closed-loop bench's fly_server opens `<course>/course.blend`, a symlink to
+it): it already holds the backdrop, the dark tone below the horizon and the frozen time (no drivers, actions or Scene
+Time nodes left). Do not add box_views' backdrop again. Do not un-hide hidden collections: the patch prototypes
+(`fc_*`) and Infinigen's asset collections would render at the origin. Keep persistent data on. It renders A0 only;
+the haze look's fog box is box_views' `set_fog`, not in the file. It keeps Infinigen's two cameras (`camera_0_*`).
+The first frame syncs longer than the rest (9 s for plain 201, 13 s for forest 222 on gs2).
 
 ## What it costs (gs2: 32 cores, 62 GB, no GPU)
 
