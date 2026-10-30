@@ -40,7 +40,7 @@ def parse():
     ap.add_argument("--no-monocots", action="store_true", help="monocot grasses take ~27 min per model here")
     ap.add_argument("--voxel", type=float, default=0.15, help="terrain mesher voxel, m")
     ap.add_argument("--near-subsurf-max-faces", type=int, default=600_000,
-                    help="leave Infinigen's near terrain unsubdivided above this many faces (steep types)")
+                    help="leave Infinigen's near terrain unsubdivided above this many faces (~53 KB/face otherwise)")
     ap.add_argument("--unique-trees", type=int, default=12, help="unique trees per species; the rest are copies")
     ap.add_argument("--unique-bushes", type=int, default=10, help="unique bushes per species; the rest are copies")
     ap.add_argument("--configs", nargs="*", default=[])
@@ -90,8 +90,8 @@ def main():
     # Infinigen puts a COLLISION modifier on the near-camera terrain for falling-leaf particles (off here). With the
     # box crop that terrain is the whole subdivided box, and the modifier's BVH is rebuilt on depsgraph updates.
     # It also subdivides that terrain twice (SUBSURF levels=2), sized for its own 0.8 m coarse mesh near one camera.
-    # Ours is the whole square, already at --voxel, and OpenSubdiv needs ~50 KB per face: on steep terrain
-    # (mountain: 1.1 M faces in the square) that alone passed 45 GB. Above the limit the near terrain stays as meshed.
+    # Ours is the whole square, already at --voxel, and OpenSubdiv needs ~53 KB per face at any level: mountain 105
+    # (a floating mountain over the box, 1.1 M faces) passed 45 GB there. Above the limit it stays as meshed.
     _modify_mesh = butil.modify_mesh
     near = {}
 
