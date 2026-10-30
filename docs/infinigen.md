@@ -119,6 +119,12 @@ nearly all sync; depsgraph instances by `probe_cost.py`):**
 | plain 201 | 46-52 s | 59-66 s | 3.6 s | 5.07 M -> 0.43 M |
 | forest 222 | not measured | 59-60 s | 8.5-9.2 s | 6.39 M -> 1.01 M |
 
+On airstation03's 5090 (job dce30f43, `tools/gpu_timing.sh`: OptiX, 64 samples, steady frames, GPU idle at the
+start) plain 201 goes from 18.1 s uncut to 1.95 s cut (32 samples: 17.4 -> 1.6 s), forest 222 from 18.4 s to
+3.0 s (timed on an earlier build that patched its scatters; the final copy has 7 % more instances). Cycles' own
+split puts sync at 17 s uncut and 1.05 / 2.4 s cut; path tracing and denoising take 0.9 / 0.55 s. Peak GPU
+memory is 9.8-10.8 GB cut and 10.5-12.4 GB uncut.
+
 What is left in the cut copies is the scene's own trees, untouched (plain 201: 0.23 M instances, forest 222: 0.40 M),
 the thinned backdrop (0.13 M / 0.52 M) and, in forest 222, its sparse scatters (0.09 M). Writing a cut copy takes
 1-3 min at up to 10 GB (plain 201: 164 s, peak RSS 9.8 GB; forest 222: 57 s). The copy is self-contained (no external
@@ -152,7 +158,7 @@ The first frame syncs longer than the rest (9 s for plain 201, 13 s for forest 2
 | collision cloud and band map | ~2.5 min |
 | one 640 x 480 drone frame, CPU Cycles, 30 threads | 175-225 s at 32 spp (leaf instances and the haze volume dominate) |
 | batch 1 (10-30): 12 plain / river / forest squares at their scene type's defaults, design distance 8 | generation 15-101 min (median 28; the 101 was 75 min of slime mold, off since), scene files 1.5-10.6 GB (1e9 bytes), frames 24-296 s at 32 spp (median 101), render memory 5-25 GB in Blender's own count |
-| one 640 x 480 flight frame on airstation03's 5090 (`tools/gpu_timing.sh`: Blender 5.2, OptiX, `--bench`, OptiX denoiser, time frozen, camera stepping 5 cm; 4 smoke scenes, GPU 96 % busy with other jobs) | 2.4-15.7 s at 64 spp (scene medians 4.1-11.9), 2.7-12.6 s at 32 spp, peak GPU memory 7.1-8.6 GB; a Wenshan course takes 0.27-0.40 s on the same card. Halving the samples barely helps: the per-frame instance update (trap 11) and the shared GPU take most of it |
+| one 640 x 480 flight frame on airstation03's 5090 (`tools/gpu_timing.sh`: Blender 5.2, OptiX, `--bench`, OptiX denoiser, time frozen, camera stepping 5 cm; 4 smoke scenes, GPU 96 % busy with other jobs) | 2.4-15.7 s at 64 spp (scene medians 4.1-11.9), 2.7-12.6 s at 32 spp, peak GPU memory 7.1-8.6 GB; a Wenshan course takes 0.27-0.40 s on the same card. Halving the samples barely helps: the per-frame instance update (trap 11) and the shared GPU take most of it; flight copies (`tools/flight_copy.py`) bring it to 1.95-3.0 s |
 
 At design distance 4 m a scene with two tree species came to 11 GB and needed 53 GB to render, more than
 gs2 has; use 8 m or more. Even at 8 m one dense river seed (batch 1 river 212, 85 % canopy) came to 10.6 GB:
