@@ -79,10 +79,14 @@ from above and let it in from the sides beneath them, where the fog scatters it 
 | generate one 50 x 50 m populated square | 26-35 min CPU (terrain 3 min, placeholders 2-4, ground cover 10-15, trees 3-13, fine terrain 1) |
 | collision cloud and band map | ~2.5 min |
 | one 640 x 480 drone frame, CPU Cycles, 30 threads | 175-225 s at 32 spp (leaf instances and the haze volume dominate) |
-| batch 1 (10-30): 12 plain / river / forest squares at their scene type's defaults, design distance 8 | generation 15-101 min (median 28; the 101 was 75 min of slime mold, off since), scene files 1.5-9.9 GB, frames 30-301 s at 32 spp (median 95) |
+| batch 1 (10-30): 12 plain / river / forest squares at their scene type's defaults, design distance 8 | generation 15-101 min (median 28; the 101 was 75 min of slime mold, off since), scene files 1.5-10.6 GB (1e9 bytes), frames 24-296 s at 32 spp (median 101), render memory 5-25 GB in Blender's own count |
+| one 640 x 480 flight frame on airstation03's 5090 (`tools/gpu_timing.sh`: Blender 5.2, OptiX, `--bench`, OptiX denoiser, time frozen, camera stepping 5 cm; 4 smoke scenes, GPU 96 % busy with other jobs) | 2.4-15.7 s at 64 spp (scene medians 4.1-11.9), 2.7-12.6 s at 32 spp, peak GPU memory 7.1-8.6 GB; a Wenshan course takes 0.27-0.40 s on the same card. Halving the samples barely helps: the per-frame instance update (trap 11) and the shared GPU take most of it |
 
 At design distance 4 m a scene with two tree species came to 11 GB and needed 53 GB to render, more than
-gs2 has; use 8 m or more.
+gs2 has; use 8 m or more. Even at 8 m one dense river seed (batch 1 river 212, 85 % canopy) came to 10.6 GB:
+its render passed 33 GB in Blender's count and 55 GB resident and never finished on gs2 (killed three times).
+The next largest, forest 222 at 6.1 GB, rendered at a 25 GB peak. Check the size of `scene.blend` before
+rendering.
 
 ## Traps we hit (all handled in the scripts)
 
