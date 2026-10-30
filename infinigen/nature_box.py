@@ -107,21 +107,6 @@ def main():
 
     butil.modify_mesh = modify_mesh_box
 
-    # Infinigen's camera no longer decides what is populated, but its pose search still has to succeed. Some types ask
-    # for views a cropped square cannot give (snowy_mountain: every visible terrain point >= 40 m away; 0 of 3000
-    # proposals pass on mountain's square), and Infinigen gives up after 30000 tries: retry with its default rules.
-    from infinigen.core.placement import camera as cam_placement
-    _base_views = cam_placement.compute_base_views
-
-    def base_views_box(*args, **kwargs):
-        try:
-            return _base_views(*args, **kwargs)
-        except ValueError as e:
-            print(f"{e}; retrying with min_terrain_distance=2, terrain_coverage_range=(0.5, 1)", flush=True)
-            return _base_views(*args, **{**kwargs, "min_terrain_distance": 2, "terrain_coverage_range": (0.5, 1)})
-
-    cam_placement.compute_base_views = base_views_box
-
     # Trees and bushes: the first K placeholders of each species get unique assets, the rest get linked copies of
     # them (random yaw, +-10 % scale) -- a few hundred unique trees would take hours to grow.
     from infinigen.core.placement import placement as plc
@@ -203,6 +188,9 @@ def main():
         "compose_nature.ground_creatures_chance=0.0",
         "compose_nature.flying_creatures_chance=0.0",
         "execute_tasks.optimize_terrain_diskusage=False",
+        # the camera no longer decides what is populated, but its pose search must still finish: snowy_mountain wants
+        # all visible terrain >= 40 m away, which the square almost never offers. base.gin's 2 m (the other types').
+        "keep_cam_pose_proposal.min_terrain_distance=2",
     ]
     if a.tree_density is not None:
         overrides.append(f"compose_nature.tree_density={a.tree_density}")
