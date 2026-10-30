@@ -39,6 +39,8 @@ def parse():
     ap.add_argument("--design-dist", type=float, default=4.0, help="asset detail as if seen from this far, m")
     ap.add_argument("--no-monocots", action="store_true", help="monocot grasses take ~27 min per model here")
     ap.add_argument("--voxel", type=float, default=0.15, help="terrain mesher voxel, m")
+    ap.add_argument("--near-subsurf-max-faces", type=int, default=600_000,
+                    help="leave Infinigen's near terrain unsubdivided above this many faces (~53 KB/face otherwise)")
     ap.add_argument("--unique-trees", type=int, default=12, help="unique trees per species; the rest are copies")
     ap.add_argument("--unique-bushes", type=int, default=10, help="unique bushes per species; the rest are copies")
     ap.add_argument("--configs", nargs="*", default=[])
@@ -87,14 +89,23 @@ def main():
 
     # Infinigen puts a COLLISION modifier on the near-camera terrain for falling-leaf particles (off here). With the
     # box crop that terrain is the whole subdivided box, and the modifier's BVH is rebuilt on depsgraph updates.
+    # It also subdivides that terrain twice (SUBSURF levels=2), sized for its own 0.8 m coarse mesh near one camera.
+    # Ours is the whole square, already at --voxel, and OpenSubdiv needs ~53 KB per face at any level: mountain 105
+    # (a floating mountain over the box, 1.1 M faces) passed 45 GB there. Above the limit it stays as meshed.
     _modify_mesh = butil.modify_mesh
+    near = {}
 
-    def modify_mesh_nocollision(obj, type, *args, **kwargs):
+    def modify_mesh_box(obj, type, *args, **kwargs):
         if type == "COLLISION":
             kwargs["show_viewport"] = False  # keep the settings Infinigen touches next, skip viewport evaluation
+        if type == "SUBSURF" and obj.name.endswith(".inview_near"):
+            near.update(faces=len(obj.data.polygons), subdivided=len(obj.data.polygons) <= a.near_subsurf_max_faces)
+            if not near["subdivided"]:
+                print(f"{obj.name}: {near['faces']} faces > --near-subsurf-max-faces, not subdivided", flush=True)
+                return obj
         return _modify_mesh(obj, type, *args, **kwargs)
 
-    butil.modify_mesh = modify_mesh_nocollision
+    butil.modify_mesh = modify_mesh_box
 
     # Trees and bushes: the first K placeholders of each species get unique assets, the rest get linked copies of
     # them (random yaw, +-10 % scale) -- a few hundred unique trees would take hours to grow.
@@ -177,6 +188,9 @@ def main():
         "compose_nature.ground_creatures_chance=0.0",
         "compose_nature.flying_creatures_chance=0.0",
         "execute_tasks.optimize_terrain_diskusage=False",
+        # the camera no longer decides what is populated, but its pose search must still finish: snowy_mountain wants
+        # all visible terrain >= 40 m away, which the square almost never offers. base.gin's 2 m (the other types').
+        "keep_cam_pose_proposal.min_terrain_distance=2",
     ]
     if a.tree_density is not None:
         overrides.append(f"compose_nature.tree_density={a.tree_density}")
@@ -198,7 +212,7 @@ def main():
     rec = {"seed": a.seed, "scene_type": a.scene_type, "water": a.water, "half": a.half, "margin": a.margin, "region": region, "terrain_bound": tbound,
            "tree_density": a.tree_density, "bush_density": a.bush_density, "design_dist": a.design_dist,
            "voxel": a.voxel, "mesher_subdiv": n, "configs": args.configs, "overrides": overrides,
-           "unique_trees": a.unique_trees, "unique_bushes": a.unique_bushes,
+           "unique_trees": a.unique_trees, "unique_bushes": a.unique_bushes, "near_terrain": near,
            "seconds": round(time.time() - t0, 1)}
     (a.out / "box.json").write_text(json.dumps(rec, indent=1))
     print("FOREST_BOX_DONE", json.dumps(rec))
