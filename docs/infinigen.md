@@ -108,8 +108,10 @@ gs2 has; use 8 m or more.
     show on sand and slopes (Infinigen's OcMesher hides them by refining near its camera). `nature_box.py` shades
     the fine terrain smooth before Infinigen saves it, keeping edges sharper than `--smooth-angle` (35 deg) sharp:
     shading everything smooth makes the voronoi rocks, which are part of the terrain mesh, look melted, and the
-    angle keeps their edges. Shading only, so the cloud is unchanged. `box_views.py` applies the same at render time
-    (`--smooth-angle`, 0 renders the terrain as saved), so scenes generated before this render the same way.
+    angle keeps their edges. Shading only, so the cloud is unchanged: plain seed 101 regenerated with it (and with
+    the cave, mountain and indoor changes merged) gives a byte-identical `cloud.npz` to the run from before them.
+    `box_views.py` applies the same at render time (`--smooth-angle`, 0 renders the terrain as saved), so scenes
+    generated before this render the same way.
 
 ## Scene types
 
