@@ -588,7 +588,13 @@ def sky_node():
 
 
 def world_background():
+    """The Background node feeding the World Output (Infinigen's world also holds an unconnected one)."""
     w = bpy.context.scene.world
+    for o in w.node_tree.nodes:
+        if o.type == "OUTPUT_WORLD" and o.inputs["Surface"].links:
+            n = o.inputs["Surface"].links[0].from_node
+            if n.type == "BACKGROUND":
+                return n
     for n in w.node_tree.nodes:
         if n.type == "BACKGROUND":
             return n
@@ -596,6 +602,8 @@ def world_background():
 
 
 BACKDROP_RING = 90.0     # the backdrop skirt and trees reach this far from the centre, m
+FOG_HALF_XY = 2000.0     # haze box half-width, m: far enough that nothing beyond it shows through
+OVERCAST = (0.78, 0.80, 0.84, 1.0)   # the haze look's sky colour (linear), at the scene's own sky strength
 FOG_GEOM = {"half_xy": 60.0, "z0": -10.0, "z1": 40.0}
 
 
@@ -647,6 +655,11 @@ def apply_look(look, base, view_yaw):
     if sky is None or bg is None:
         print("no sky texture / background node; look", look, "skipped")
         return False
+    nt = bg.id_data
+    if not bg.inputs["Color"].links:           # the haze look cut the sky off
+        nt.links.new(sky.outputs["Color"], bg.inputs["Color"])
+    for name, hidden in base.get("clouds", {}).items():
+        bpy.data.objects[name].hide_render = hidden
     sky.sun_elevation, sky.sun_rotation, sky.sun_intensity = base["elev"], base["rot"], base["sun"]
     bg.inputs["Strength"].default_value = base["strength"]
     sky.air_density, sky.dust_density = base["air"], base["dust"]
@@ -660,11 +673,14 @@ def apply_look(look, base, view_yaw):
         sky.sun_rotation = (math.pi / 2 - view_yaw) % (2 * math.pi)  # sun roughly ahead of the camera
         sky.sun_intensity = 1.0
         scene.view_settings.exposure = 1.0
-    elif look == "A2":        # overcast haze / fog
-        sky.sun_elevation = math.radians(35.0)
-        sky.sun_intensity = 0.15
-        sky.dust_density = 8.0
-        bg.inputs["Strength"].default_value = base["strength"] * 1.4
+    elif look == "A2":        # overcast haze: a uniform grey sky (no sun) and fog, the horizon lost in it
+        for link in list(bg.inputs["Color"].links):
+            nt.links.remove(link)
+        bg.inputs["Color"].default_value = OVERCAST
+        # Infinigen's cloud layer would shade that sky from above and let it in from the sides under the clouds,
+        # where the fog scatters it into a white band on the horizon
+        for name in base.get("clouds", {}):
+            bpy.data.objects[name].hide_render = True
         set_fog(0.04)
     elif look == "A3":        # dusk, sun just below the horizon
         sky.sun_elevation = math.radians(-2.0)
@@ -1062,9 +1078,8 @@ def main():
         floor_z = grid_lookup(GZf, region)
         print(f"cave floor: {100 * (1 - nan.mean()):.0f} % of the region's columns, z {np.nanmin(GZ):.1f} to "
               f"{np.nanmax(GZ):.1f}", flush=True)
-    # the haze box covers the backdrop: a skirt ring outside it is lit through no fog and glows on the horizon
-    FOG_GEOM.update(half_xy=max(region, BACKDROP_RING) + 20.0, z0=float(np.nanmin(GZ)) - 5.0,
-                    z1=float(np.nanmax(GZ)) + 35.0)
+    # the haze box reaches far past the backdrop, so the horizon is fog rather than the world past its edge
+    FOG_GEOM.update(half_xy=FOG_HALF_XY, z0=float(np.nanmin(GZ)) - 5.0, z1=float(np.nanmax(GZ)) + 35.0)
     def ground_grid(x, y):
         i = int(round((x + region) / 0.5))
         j = int(round((y + region) / 0.5))
@@ -1206,7 +1221,8 @@ def main():
     sky, bg = sky_node(), world_background()
     if sky is not None and bg is not None:
         base = {"elev": sky.sun_elevation, "rot": sky.sun_rotation, "sun": sky.sun_intensity,
-                "strength": bg.inputs["Strength"].default_value, "air": sky.air_density, "dust": sky.dust_density}
+                "strength": bg.inputs["Strength"].default_value, "air": sky.air_density, "dust": sky.dust_density,
+                "clouds": {o.name: o.hide_render for o in bpy.data.objects if o.name.startswith("KoleClouds")}}
     timings = []
     for k, v in enumerate(views):
         pose_camera(cam, v["p"], v["yaw"])

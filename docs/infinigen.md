@@ -65,8 +65,12 @@ a look changes the light and the camera follows, as the drone's does. A path tra
 so a dim look renders as clean as a bright one. The EV and the meter are in `views.json` (`timings`).
 `--exposure fixed` renders each look at its own exposure (A1 +1, A3 +2), as before; under it the haze look came out
 near-black in about half of the first batch, where a dusty sky, a dimmed sun and a fog box reaching 35 m above
-the highest ground leave little light. The haze box also reaches past the backdrop now (`BACKDROP_RING` + 20 m);
-it used to stop at 65 m, so the backdrop ring from 65 to 90 m lay outside the fog, fully lit, and glowed on the horizon.
+the highest ground leave little light. The haze look itself is now an overcast day: a uniform grey sky at the
+scene's own sky strength, no sun, Infinigen's cloud layer hidden, and fog 0.04 / m in a box 4 km wide
+(`FOG_HALF_XY`) and 35 m over the highest ground (visibility ~100 m). With the clouds on, they shade the sky light
+from above and let it in from the sides beneath them, where the fog scatters it into a white band on the horizon
+(the frame was 6x darker and the band saturated). Infinigen's world also holds an unconnected Background node;
+`world_background()` follows the link to the World Output, so the looks' sky strength now takes effect.
 
 ## What it costs (gs2: 32 cores, 62 GB, no GPU)
 
