@@ -12,7 +12,7 @@ backdrop alone is 5.9 M. A flight frame of plain 201 spent 50 s in that sync on 
 What the copy holds (--no-cut keeps 1 only, the like-for-like reference):
 1. The backdrop, water and terrain shading as box_views.py renders them (water hidden unless --keep-water, which
    re-shades it); drivers, Scene Time nodes and object animation baked at the current frame (tools/freeze.py).
-2. Dense scatters (>= --patch-min instances: grass, ground leaves) tiled as patches: the scatter's points binned into
+2. Dense scatters (>= --patch-min instances: plain 201's grass) tiled as patches: the scatter's points binned into
    cells of ~--patch points, --patches prototype meshes realized from real cells (the scatter's assets, decimated only
    above --asset-polys; positions relative to the cell's terrain frame), one patch instance per occupied cell, picked
    by point count and turned by a multiple of 90 degrees about the local terrain normal. The density field and its
@@ -54,7 +54,7 @@ def parse():
     ap.add_argument("--no-backdrop", action="store_true", help="the scene already has one (a scene_wires.blend)")
     ap.add_argument("--no-cut", action="store_true", help="backdrop/water/shading/freeze only (reference copy)")
     ap.add_argument("--patch", type=int, default=64, help="points per patch cell")
-    ap.add_argument("--patch-min", type=int, default=20000, help="scatters with at least this many instances")
+    ap.add_argument("--patch-min", type=int, default=100000, help="scatters with at least this many instances (forest 222's 44k grass at 32 / m2 came out visibly sparser as patches, for ~1 s a frame)")
     ap.add_argument("--patches", type=int, default=24, help="prototype patches per scatter")
     ap.add_argument("--asset-polys", type=int, default=10000, help="decimate larger scatter assets to this many faces "
                     "(grass tufts, 4-7k faces, stay whole: decimating them to ~550 lost the pale blade tips)")
@@ -281,7 +281,8 @@ def patch_scatter(scatter, M, protos, pid, a, zgn, rng, half):
     # cell size from the typical point density (the scatter's density is uniform where its mask allows)
     _, c0 = np.unique(np.floor(P[:, :2] / 0.25).astype(np.int64), axis=0, return_counts=True)
     rho = float(np.median(c0)) / 0.0625
-    cell = float(np.clip(math.sqrt(a.patch / rho), 0.05, 1.0))
+    # a patch lies on one terrain plane: cells above ~0.35 m misplace tufts on rough ground
+    cell = float(np.clip(math.sqrt(a.patch / rho), 0.05, 0.35))
     uij, inv, cnt = np.unique(np.floor(P[:, :2] / cell).astype(np.int64), axis=0, return_inverse=True,
                               return_counts=True)
     inv = inv.ravel()
