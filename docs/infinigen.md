@@ -98,8 +98,9 @@ gs2 has; use 8 m or more.
    then generates in 24.5 min at a 10.8 GB peak (the chopped-tree booleans; the crop step itself 4.2 GB).
 9. **Camera rules a crop cannot meet.** Infinigen still poses its camera before anything is populated, and
    snowy_mountain asks for every visible terrain point to be at least 40 m away: on a 58 m square no proposal
-   passes (0 of 3000 on mountain's), and Infinigen gives up after 30000 tries. The pose search is then retried
-   with Infinigen's defaults (2 m, 50-100 % terrain in view); the camera no longer decides anything here.
+   passes (0 of 3000 on mountain's square, same test), and Infinigen gives up after 30000 tries. The pose search
+   is then retried with Infinigen's defaults (2 m, 50-100 % terrain in view); every stage reseeds, and the camera
+   no longer decides anything here.
 
 ## Scene types
 
